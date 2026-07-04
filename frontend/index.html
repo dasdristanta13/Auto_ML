@@ -220,6 +220,14 @@
           <div class="chips" id="dataset-chips"></div>
         </div>
 
+        <div class="card hidden" id="quality-card">
+          <div class="card-head"><h3>Data quality</h3><span class="muted small" id="quality-sub"></span></div>
+          <div class="donut-wrap">
+            <svg id="quality-ring" viewBox="0 0 120 120" role="img" aria-label="Data completeness score"></svg>
+            <div class="donut-center" id="quality-center"></div>
+          </div>
+        </div>
+
         <div class="card hidden" id="results-card">
           <div class="card-head">
             <h3>Model comparison</h3>
@@ -235,11 +243,6 @@
         <div class="card hidden" id="fi-card">
           <div class="card-head"><h3>What drives the predictions</h3></div>
           <div class="fi-list" id="fi-list"></div>
-        </div>
-
-        <div class="card hidden" id="activity-card">
-          <div class="card-head"><h3>Recent activity</h3></div>
-          <ul class="activity-list" id="activity-list"></ul>
         </div>
       </section>
 
@@ -290,6 +293,17 @@
       </div>
     </main>
   </div>
+
+  <!-- ============ recent activity (right pane) ============ -->
+  <aside class="activity-pane hidden" id="activity-pane">
+    <button class="activity-pane-toggle" id="activity-pane-toggle" type="button" aria-expanded="true" title="Collapse recent activity">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 6-6 6 6 6"/></svg>
+    </button>
+    <div class="activity-pane-body">
+      <div class="card-head"><h3>Recent activity</h3></div>
+      <ul class="activity-list" id="activity-list"></ul>
+    </div>
+  </aside>
 </div>
 
 <script src="/app.js"></script>

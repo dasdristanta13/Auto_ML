@@ -116,6 +116,8 @@ class PipelineState(TypedDict, total=False):
     cv_folds: int  # user-requested fold count; auto-reduced per candidate if data can't support it
     training_run_ids: list[str]
     training_results: list[dict[str, Any]]
+    candidate_repair_count: dict[str, int]  # keyed by candidate name, capped by config/runtime.yaml retry.max_retries
+    training_repair_log: list[dict[str, Any]]  # audit trail: {candidate_name, attempt, original_error, new_hyperparams, rationale}
     best_model: dict[str, Any]
 
     report: dict[str, Any]
@@ -144,4 +146,6 @@ def new_state(run_id: str, dataset_path: str, use_case_description: str) -> Pipe
         cv_folds=5,
         training_run_ids=[],
         training_results=[],
+        candidate_repair_count={},
+        training_repair_log=[],
     )

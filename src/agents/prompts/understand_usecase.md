@@ -21,6 +21,14 @@ MUST set is_ambiguous=true and explain why in ambiguity_reason. Do NOT
 silently guess on ambiguous cases — a human checkpoint will resolve it. Only
 set is_ambiguous=false when you are confident in every field.
 
+Never pick an identifier/key column (near-unique per row — check the
+profile's n_unique against row_count; a name like "id"/"customer_id"/"uuid"
+is a strong hint) as target_column, even if no better-named column seems to
+match — that column has no predictive label signal, it is a row identifier.
+If nothing in the profile plausibly represents the outcome described in the
+use case, set is_ambiguous=true and say so in ambiguity_reason rather than
+defaulting to whichever column happens to be present.
+
 ## User's use case description
 {{USE_CASE_DESCRIPTION}}
 

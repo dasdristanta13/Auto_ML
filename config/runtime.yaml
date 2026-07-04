@@ -17,7 +17,14 @@ tools:
 
 training:
   # Local dev stand-in for Celery/Ray (see src/training/dispatch.py).
-  max_concurrent_jobs: 4
+  # Sequential (1): candidates like XGBoost/LightGBM already spawn their own
+  # internal threads, so running several candidates concurrently multiplies
+  # that and can thrash/hang on a machine with few cores. A stuck job also
+  # permanently occupies one of this pool's fixed worker slots for the life
+  # of the server process, which cascades into every later run's training
+  # jobs queuing forever behind it. Raise this only on a machine known to
+  # have the headroom for true concurrency.
+  max_concurrent_jobs: 1
   poll_interval_seconds: 2
   poll_max_attempts: 150 # ~5 min wall clock at 2s interval before giving up
   hyperparam_search_budget_seconds: 120

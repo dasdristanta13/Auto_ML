@@ -11,6 +11,8 @@ whether to loop back here again or fall back to the report node.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from pydantic import ValidationError
 
 from src.agents.prompt_utils import render_prompt
@@ -33,7 +35,18 @@ def _fill_missing_feature_steps(steps: list[FeatureStep], suggested_steps: list[
     return filled
 
 
-def _validate_plan(raw: dict) -> tuple[FeaturePlan | None, list[str]]:
+def _known_columns(profile: dict) -> set[str]:
+    """Every real column name the profile knows about, whether narrow
+    (profile["columns"] has everything) or wide (numeric columns instead live
+    in profile["numeric_summary"]["numeric_clusters"][*]["member_columns"] —
+    see src/profiling/profile.py's is_wide_dataset branch)."""
+    known = set(profile.get("columns", {}).keys())
+    for cluster in profile.get("numeric_summary", {}).get("numeric_clusters", []):
+        known.update(cluster.get("member_columns", []))
+    return known
+
+
+def _validate_plan(raw: dict, known_columns: set[str], target_column: Optional[str]) -> tuple[FeaturePlan | None, list[str]]:
     errors: list[str] = []
     try:
         plan = FeaturePlan(**raw)
@@ -41,6 +54,21 @@ def _validate_plan(raw: dict) -> tuple[FeaturePlan | None, list[str]]:
         return None, [str(exc)]
 
     for step in plan.steps:
+        unknown = [c for c in step.columns if c not in known_columns]
+        if unknown:
+            # The LLM sometimes invents a "just in case" column that doesn't
+            # exist (e.g. a placeholder categorical step when none is
+            # present) — catching this here, before human approval, is what
+            # stops apply_feature_plan from crashing on an approved plan.
+            errors.append(f"{step.op} step references column(s) not present in the dataset: {unknown}")
+        if target_column and target_column in step.columns:
+            # Feature engineering only ever applies to X, never y. This is
+            # what would otherwise let a plan silently drop/transform the
+            # target (e.g. an identifier-looking column that was — correctly
+            # or not — configured as the target) and only surface as a vague
+            # "lost the target column" failure downstream in
+            # apply_feature_plan_node, after a human has already approved it.
+            errors.append(f"{step.op} step references the target column '{target_column}' — feature steps must never touch the target")
         if step.op == "custom_code":
             if not step.code:
                 errors.append("custom_code step is missing `code`")
@@ -75,7 +103,9 @@ def feature_engineering_node(state: PipelineState) -> PipelineState:
         json_schema=FeaturePlan.model_json_schema(),
     )
 
-    plan, errors = _validate_plan(raw)
+    plan, errors = _validate_plan(
+        raw, _known_columns(state.get("profile", {})), state.get("task_spec", {}).get("target_column")
+    )
     retry_count = dict(state.get("retry_count", {}))
 
     if plan is None:

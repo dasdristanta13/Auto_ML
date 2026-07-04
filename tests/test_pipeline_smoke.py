@@ -47,6 +47,8 @@ def _fake_generate(self, run_id, node, system_prompt, user_prompt, json_schema=N
                 }
             ]
         }
+    if node == "train_candidate_repair":
+        raise AssertionError("train_candidate_repair should not fire on this smoke test's happy path")
     if node == "report":
         return "This is a test report."
     raise ValueError(f"unexpected node in fake_generate: {node}")

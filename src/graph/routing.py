@@ -75,9 +75,17 @@ def route_after_apply_feature_plan_approved(state: PipelineState) -> str:
 def route_after_poll_training(state: PipelineState) -> str:
     results = state.get("training_results", [])
     all_terminal = bool(results) and all(r["status"] in ("succeeded", "failed") for r in results)
-    if all_terminal:
+    if not all_terminal:
+        if state.get("retry_count", {}).get("poll_training", 0) < _poll_max_attempts():
+            return "poll_training"
+        state.setdefault("errors", []).append("poll_training: attempt cap reached with jobs still pending")
         return "evaluate"
-    if state.get("retry_count", {}).get("poll_training", 0) < _poll_max_attempts():
-        return "poll_training"
-    state.setdefault("errors", []).append("poll_training: attempt cap reached with jobs still pending")
+
+    repair_count = state.get("candidate_repair_count", {})
+    max_retries = _max_retries()
+    repairable = any(
+        r["status"] == "failed" and repair_count.get(r["candidate_name"], 0) < max_retries for r in results
+    )
+    if repairable:
+        return "repair_training_candidates"
     return "evaluate"

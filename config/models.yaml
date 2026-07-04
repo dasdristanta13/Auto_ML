@@ -31,6 +31,12 @@ nodes:
     temperature: 0.0
     max_tokens: 2048
 
+  train_candidate_repair:
+    provider: openai
+    model: gpt-5-nano
+    temperature: 0.0
+    max_tokens: 2048
+
   report:
     provider: openai
     model: gpt-5-nano

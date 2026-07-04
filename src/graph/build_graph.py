@@ -17,6 +17,11 @@ Four builders:
                         endpoint has already filtered feature_plan to the
                         approved steps and set resampling_plan before this
                         graph runs.
+
+Both build_train_graph() and build_graph() route a poll_training cycle with
+only-failed candidates into repair_training_candidates (an LLM-diagnosed,
+per-candidate-capped hyperparameter fix + single retry) before falling
+through to evaluate — see routing.route_after_poll_training.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ from langgraph.graph import END, StateGraph
 from src.agents.feature_engineering_node import feature_engineering_node
 from src.agents.model_selection_node import model_selection_node
 from src.agents.report_node import report_node
+from src.agents.train_candidate_repair_node import train_candidate_repair_node
 from src.agents.understand_usecase_node import understand_usecase_node
 from src.graph import nodes, routing
 from src.state import PipelineState
@@ -72,6 +78,7 @@ def build_train_graph():
     graph.add_node("model_selection", model_selection_node)
     graph.add_node("dispatch_training", nodes.dispatch_training_node)
     graph.add_node("poll_training", nodes.poll_training_node)
+    graph.add_node("repair_training_candidates", train_candidate_repair_node)
     graph.add_node("evaluate", nodes.evaluate_node)
     graph.add_node("report", report_node)
 
@@ -86,8 +93,13 @@ def build_train_graph():
     graph.add_conditional_edges(
         "poll_training",
         routing.route_after_poll_training,
-        {"evaluate": "evaluate", "poll_training": "poll_training"},
+        {
+            "evaluate": "evaluate",
+            "poll_training": "poll_training",
+            "repair_training_candidates": "repair_training_candidates",
+        },
     )
+    graph.add_edge("repair_training_candidates", "poll_training")
     graph.add_edge("evaluate", "report")
     graph.add_edge("report", END)
     return graph.compile()
@@ -109,6 +121,7 @@ def build_graph():
     graph.add_node("model_selection", model_selection_node)
     graph.add_node("dispatch_training", nodes.dispatch_training_node)
     graph.add_node("poll_training", nodes.poll_training_node)
+    graph.add_node("repair_training_candidates", train_candidate_repair_node)
     graph.add_node("evaluate", nodes.evaluate_node)
     graph.add_node("report", report_node)
 
@@ -144,8 +157,13 @@ def build_graph():
     graph.add_conditional_edges(
         "poll_training",
         routing.route_after_poll_training,
-        {"evaluate": "evaluate", "poll_training": "poll_training"},
+        {
+            "evaluate": "evaluate",
+            "poll_training": "poll_training",
+            "repair_training_candidates": "repair_training_candidates",
+        },
     )
+    graph.add_edge("repair_training_candidates", "poll_training")
     graph.add_edge("evaluate", "report")
     graph.add_edge("report", END)
     return graph.compile()

@@ -157,6 +157,7 @@ _STAGE_MESSAGES = {
     "model_selection": "Selected candidate models suited to this task and data.",
     "dispatch_training": "Dispatched training jobs for each candidate model.",
     "poll_training": "Training in progress.",
+    "repair_training_candidates": "Diagnosed a failed candidate's error and retried it with corrected hyperparameters.",
     "evaluate": "Evaluated all candidates and selected the best model.",
     "report": "Wrote the final report.",
 }
@@ -203,6 +204,14 @@ def _plain_language_events(state: PipelineState, stages_done: list[str]) -> list
         elif stage == "dispatch_training":
             n = len(state.get("candidate_models", []))
             message = f"Dispatched {n} training job(s) — running asynchronously."
+        elif stage == "repair_training_candidates":
+            log = state.get("training_repair_log", [])
+            names = ", ".join(f"'{r['candidate_name']}'" for r in log)
+            message = (
+                f"Auto-repaired {len(log)} failed candidate(s) ({names}) with LLM-corrected hyperparameters and retried."
+                if log
+                else message
+            )
         elif stage == "evaluate":
             best = state.get("best_model", {})
             if best.get("candidate_name"):

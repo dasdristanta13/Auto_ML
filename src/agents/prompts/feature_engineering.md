@@ -24,6 +24,20 @@ combination of the structured ops below can express the transform:
 Any column flagged in leakage_flags with severity "high" MUST be dropped
 unless there is a clear, stated reason not to (explain in plan_rationale if so).
 
+Every `columns` entry in every step MUST be an exact column name that exists
+in the dataset profile below — never invent a placeholder or hypothetical
+column "in case one appears later" (e.g. a speculative categorical-encoding
+step with no real column behind it). A step referencing a nonexistent column
+gets the entire plan rejected and retried.
+
+No step may ever reference the task specification's target_column, under any
+op — not drop, not impute, not scale, nothing. Feature engineering applies
+only to the model's inputs; the target is handled separately downstream. This
+holds even if the target column looks like an identifier (e.g. an ID-like
+name or near-unique values) — that is a sign the task specification itself
+may be wrong, not a reason to transform the target. A step referencing the
+target column gets the entire plan rejected and retried.
+
 A deterministic exploratory-data-analysis pass has already inspected this
 dataset (see EDA below) and computed concrete suggested_steps per column —
 treat these as a strong, data-grounded prior. You do not need to restate a

@@ -77,6 +77,19 @@ $("theme-toggle").addEventListener("click", () => {
 });
 applyTheme(localStorage.getItem("automl-theme") || "light");
 
+/* ================= activity pane (collapsible) ================= */
+
+function setActivityPaneCollapsed(collapsed) {
+  $("activity-pane").classList.toggle("collapsed", collapsed);
+  $("activity-pane-toggle").setAttribute("aria-expanded", String(!collapsed));
+  $("activity-pane-toggle").title = collapsed ? "Expand recent activity" : "Collapse recent activity";
+  localStorage.setItem("automl-activity-collapsed", collapsed ? "1" : "0");
+}
+$("activity-pane-toggle").addEventListener("click", () => {
+  setActivityPaneCollapsed(!$("activity-pane").classList.contains("collapsed"));
+});
+setActivityPaneCollapsed(localStorage.getItem("automl-activity-collapsed") === "1");
+
 /* ================= nav ================= */
 
 $("nav-dashboard").addEventListener("click", () => {
@@ -96,6 +109,7 @@ function showIntakeView() {
   currentRunId = null;
   $("run-view").classList.add("hidden");
   $("intake-view").classList.remove("hidden");
+  $("activity-pane").classList.add("hidden");
   setActiveNav("nav-new");
   $("header-eyebrow").textContent = "Agentic AutoML";
   $("run-title").textContent = "Start an experiment";
@@ -284,6 +298,7 @@ function render(run) {
   renderLeakage(run);
   renderFeatureApproval(run);
   renderDatasetSummary(run);
+  renderDataQuality(run);
   renderInsights(run);
   renderResults(run);
   renderFeatureImportance(run);
@@ -692,6 +707,33 @@ function renderDatasetSummary(run) {
     ${piiCount ? `<span class="chip flagged" title="Redacted from every AI-facing step">${ICONS.warning} ${piiCount} PII column(s)</span>` : ""}`;
 }
 
+/* ================= data quality ring ================= */
+
+function renderDataQuality(run) {
+  const card = $("quality-card");
+  const columns = run.profile_columns || [];
+  if (!columns.length) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+
+  const avgNullRate = columns.reduce((sum, col) => sum + (col.null_rate || 0), 0) / columns.length;
+  const completeness = Math.max(0, 1 - avgNullRate);
+  const flaggedCount = columns.filter((c) => (c.null_rate || 0) > 0).length;
+
+  $("quality-sub").textContent = flaggedCount
+    ? `${flaggedCount} column${flaggedCount === 1 ? "" : "s"} with missing values`
+    : "no missing values detected";
+
+  const styles = getComputedStyle(document.documentElement);
+  const good = styles.getPropertyValue("--accent-success").trim();
+  const R = 44, C = 2 * Math.PI * R;
+  const len = Math.max(completeness * C, 1);
+  $("quality-ring").innerHTML = `
+    <circle cx="60" cy="60" r="${R}" fill="none" stroke="var(--border-subtle)" stroke-width="14"/>
+    <circle cx="60" cy="60" r="${R}" fill="none" stroke="${good}" stroke-width="14" stroke-linecap="round"
+      stroke-dasharray="${len} ${C - len}" transform="rotate(-90 60 60)"/>`;
+  $("quality-center").innerHTML = `${Math.round(completeness * 100)}%<small>complete</small>`;
+}
+
 /* ================= results table ================= */
 
 function renderResults(run) {
@@ -777,9 +819,9 @@ function renderFeatureImportance(run) {
 
 function renderActivity(run) {
   const events = run.events || [];
-  const card = $("activity-card");
-  if (!events.length) { card.classList.add("hidden"); return; }
-  card.classList.remove("hidden");
+  const pane = $("activity-pane");
+  if (!events.length) { pane.classList.add("hidden"); return; }
+  pane.classList.remove("hidden");
   $("activity-list").innerHTML = [...events]
     .reverse()
     .map(

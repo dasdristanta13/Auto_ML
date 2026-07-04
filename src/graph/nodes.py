@@ -14,6 +14,7 @@ import yaml
 from sklearn.preprocessing import MinMaxScaler, OrdinalEncoder, RobustScaler, StandardScaler
 
 from src.profiling.eda import run_eda
+from src.profiling.heuristics import looks_like_identifier
 from src.profiling.leakage import detect_target_leakage
 from src.profiling.profile import profile_dataset
 from src.sandbox.execute import SandboxExecutionError, SandboxTimeoutError, SandboxValidationError, dry_run, run_on_full_dataset
@@ -205,6 +206,28 @@ def apply_feature_plan_node(state: PipelineState) -> PipelineState:
         state["feature_plan_valid"] = False
         state["feature_plan_feedback"] = f"resulting dataset lost or fully nulled the target column '{target_column}'"
         return state
+
+    # Safety net for real-world recurring incident: a near-unique identifier
+    # (e.g. "customer_id") confirmed as a classification target turns into an
+    # ~n_row-class classification problem — some estimators fail fast
+    # (liblinear refuses multiclass) but others (e.g. GradientBoosting, which
+    # fits one tree per class per boosting round) don't fail, they just
+    # become catastrophically expensive and look hung. The confirm-step
+    # already warns when this is detected, but a human can click through
+    # that warning, so refuse to dispatch training here regardless.
+    task_spec = state.get("task_spec", {})
+    if target_column and task_spec.get("task_type") == "classification":
+        target_info = (state.get("profile", {}).get("columns") or {}).get(target_column)
+        row_count = state.get("profile", {}).get("row_count", 0)
+        if target_info and looks_like_identifier(target_column, target_info.get("dtype", ""), target_info.get("n_unique", 0), row_count):
+            state["feature_plan_valid"] = False
+            state.setdefault("errors", []).append(
+                f"apply_feature_plan: target column '{target_column}' looks like an identifier "
+                f"({target_info.get('n_unique')} unique values across {row_count} rows) — classification "
+                "against a near-unique column would need one class per row and is almost certainly a "
+                "mis-selected target. Start a new run and pick the actual outcome column as target."
+            )
+            return state
 
     TRANSFORMED_DIR.mkdir(parents=True, exist_ok=True)
     out_path = TRANSFORMED_DIR / f"{state['run_id']}.csv"
