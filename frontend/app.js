@@ -489,13 +489,20 @@ function fillMetrics(preselect) {
 }
 $("tasktype-select").addEventListener("change", () => fillMetrics());
 
+$("cv-enabled-input").addEventListener("change", (e) => {
+  $("cv-folds-input").disabled = !e.target.checked;
+});
+
 $("confirm-form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const cvEnabled = $("cv-enabled-input").checked;
   const body = {
     target_column: $("target-select").value,
     task_type: $("tasktype-select").value,
     metric: $("metric-select").value,
     constraints: [],
+    cv_enabled: cvEnabled,
+    cv_folds: cvEnabled ? Math.max(2, Math.min(10, Number($("cv-folds-input").value) || 5)) : 0,
   };
   const res = await fetch(`/api/runs/${currentRunId}/confirm`, {
     method: "POST",
@@ -600,6 +607,16 @@ function renderResults(run) {
 
   const metric = (run.task_spec || {}).metric;
   $("results-sub").textContent = metric ? `ranked by ${metric}` : "";
+
+  const cvConfig = run.cv_config || {};
+  const cvChip = $("cv-config-chip");
+  if (cvConfig.enabled) {
+    cvChip.className = "chip detected cv-config-chip";
+    cvChip.innerHTML = `${ICONS.check}${cvConfig.requested_folds}-fold cross-validation requested`;
+  } else {
+    cvChip.className = "chip cv-config-chip";
+    cvChip.innerHTML = `Cross-validation disabled for this run`;
+  }
 
   const metricNames = [...new Set(results.flatMap((r) => Object.keys(r.metrics || {})))];
   const bestId = (run.best_model || {}).run_id;

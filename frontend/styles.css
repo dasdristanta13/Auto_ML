@@ -392,6 +392,15 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .field { display: flex; flex-direction: column; gap: 6px; font-size: var(--text-sm); }
 .field span { font-weight: 650; }
 .field .field-tag { font-weight: 500; }
+
+.cv-field { grid-column: 1 / -1; }
+.cv-controls { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
+.checkbox-inline, .cv-folds-label { display: flex; align-items: center; gap: 6px; font-weight: 500; }
+.checkbox-inline input[type="checkbox"] { width: 16px; height: 16px; }
+.cv-folds-label input[type="number"] { width: 64px; }
+.cv-folds-label input[type="number"]:disabled { opacity: 0.5; }
+.cv-config-chip { margin: 0 0 var(--sp-2); }
+.cv-config-chip:empty { display: none; }
 select, textarea, input[type="text"], input[type="number"] {
   font: inherit; color: var(--text-primary);
   background: var(--bg-surface-raised);

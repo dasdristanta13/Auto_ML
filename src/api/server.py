@@ -111,6 +111,8 @@ class ConfirmRequest(BaseModel):
     task_type: str
     metric: str
     constraints: list[str] = []
+    cv_enabled: bool = True
+    cv_folds: int = 5
 
 
 def _get_entry(run_id: str) -> dict[str, Any]:
@@ -228,6 +230,10 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
             "events": events,
             "retry_count": retry_count,
             "task_spec": state.get("task_spec"),
+            "cv_config": {
+                "enabled": state.get("cv_enabled", True),
+                "requested_folds": state.get("cv_folds", 5),
+            },
             "profile_summary": {
                 "row_count": state.get("profile", {}).get("row_count"),
                 "column_count": state.get("profile", {}).get("column_count"),
@@ -306,6 +312,8 @@ def confirm_run(run_id: str, body: ConfirmRequest) -> dict[str, Any]:
         columns = state.get("profile", {}).get("columns", {})
         if columns and body.target_column not in columns:
             raise HTTPException(status_code=400, detail=f"'{body.target_column}' is not a column of this dataset")
+        if body.cv_enabled and body.cv_folds < 2:
+            raise HTTPException(status_code=400, detail="cv_folds must be at least 2 when cross-validation is enabled")
 
         task_spec = dict(state.get("task_spec") or {})
         task_spec.update(
@@ -317,6 +325,8 @@ def confirm_run(run_id: str, body: ConfirmRequest) -> dict[str, Any]:
             ambiguity_reason=None,
         )
         state["task_spec"] = task_spec
+        state["cv_enabled"] = body.cv_enabled
+        state["cv_folds"] = body.cv_folds
         state["needs_human_confirmation"] = False
         state["human_confirmed"] = True
         entry["status"] = "running"

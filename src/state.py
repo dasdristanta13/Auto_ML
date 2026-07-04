@@ -100,6 +100,8 @@ class PipelineState(TypedDict, total=False):
     transformed_dataset_path: str
 
     candidate_models: list[dict[str, Any]]
+    cv_enabled: bool  # user-configurable at the confirm checkpoint (default True)
+    cv_folds: int  # user-requested fold count; auto-reduced per candidate if data can't support it
     training_run_ids: list[str]
     training_results: list[dict[str, Any]]
     best_model: dict[str, Any]
@@ -123,6 +125,8 @@ def new_state(run_id: str, dataset_path: str, use_case_description: str) -> Pipe
         human_confirmed=False,
         feature_plan_valid=False,
         candidate_models=[],
+        cv_enabled=True,
+        cv_folds=5,
         training_run_ids=[],
         training_results=[],
     )

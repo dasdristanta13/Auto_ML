@@ -211,6 +211,8 @@ def _run_job(
     estimator_name: str,
     hyperparams: dict[str, Any],
     time_column: Optional[str],
+    cv_enabled: bool,
+    cv_folds: Optional[int],
 ) -> None:
     start = time.monotonic()
     _registry[run_id]["status"] = "running"
@@ -234,8 +236,11 @@ def _run_job(
         X_test_numeric = X_test[X_train_numeric.columns].fillna(0)
 
         estimator = _build_estimator(library, estimator_name, hyperparams)
-        cv_folds_requested = _runtime_config()["cv_folds"]
-        cv_result = _cross_validate(estimator, X_train_numeric, y_train, task_type, time_column, cv_folds_requested)
+        if cv_enabled:
+            cv_folds_requested = cv_folds if cv_folds is not None else _runtime_config()["cv_folds"]
+            cv_result = _cross_validate(estimator, X_train_numeric, y_train, task_type, time_column, cv_folds_requested)
+        else:
+            cv_result = {"folds": 0, "metrics": {}, "note": "cross-validation disabled for this run"}
 
         estimator.fit(X_train_numeric, y_train)
         y_pred = estimator.predict(X_test_numeric)
@@ -280,13 +285,18 @@ def train_model(
     target_column: str,
     task_type: str,
     time_column: Optional[str] = None,
+    cv_enabled: bool = True,
+    cv_folds: Optional[int] = None,
 ) -> str:
     """Dispatch an async training job for one candidate model and return its
     run_id IMMEDIATELY (does not block on training completion). Use
     poll_training_job(run_id) to check status. `library` is one of "sklearn",
     "xgboost", "lightgbm"; `estimator` is the class name within that library
     (e.g. "RandomForestClassifier"). Pass `time_column` for time-series data
-    so the train/test split is chronological rather than random.
+    so the train/test split is chronological rather than random. `cv_enabled`/
+    `cv_folds` are the user's choice at the confirm checkpoint (folds defaults
+    to config/runtime.yaml's cv_folds when not given); set cv_enabled=False to
+    skip k-fold cross-validation entirely for this run.
     """
     run_id = str(uuid.uuid4())
     _registry[run_id] = {
@@ -302,7 +312,17 @@ def train_model(
         "cv_note": None,
     }
     future = _get_executor().submit(
-        _run_job, run_id, dataset_path, target_column, task_type, library, estimator, hyperparams, time_column
+        _run_job,
+        run_id,
+        dataset_path,
+        target_column,
+        task_type,
+        library,
+        estimator,
+        hyperparams,
+        time_column,
+        cv_enabled,
+        cv_folds,
     )
     _futures[run_id] = future
     return run_id

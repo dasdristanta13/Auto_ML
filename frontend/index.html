@@ -136,6 +136,19 @@
             <span>Success metric <span class="chip inferred field-tag">inferred</span></span>
             <select id="metric-select" required></select>
           </label>
+          <label class="field cv-field">
+            <span>Cross-validation</span>
+            <div class="cv-controls">
+              <label class="checkbox-inline">
+                <input type="checkbox" id="cv-enabled-input" checked />
+                Enable k-fold CV
+              </label>
+              <label class="cv-folds-label">
+                Folds
+                <input type="number" id="cv-folds-input" min="2" max="10" step="1" value="5" />
+              </label>
+            </div>
+          </label>
           <div class="btn-row">
             <button type="submit" class="btn primary">Confirm &amp; train</button>
           </div>
@@ -172,7 +185,11 @@
         </div>
 
         <div class="card hidden" id="results-card">
-          <div class="card-head"><h3>Model comparison</h3><span class="muted small" id="results-sub"></span></div>
+          <div class="card-head">
+            <h3>Model comparison</h3>
+            <span class="muted small" id="results-sub"></span>
+          </div>
+          <div class="chip cv-config-chip" id="cv-config-chip"></div>
           <div class="table-scroll"><table class="results-table" id="results-table"></table></div>
         </div>
 
