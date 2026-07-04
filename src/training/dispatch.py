@@ -101,7 +101,11 @@ def _split(
         )
 
     feature_cols = [c for c in df.columns if c != target_column]
-    stratify = df[target_column] if task_type == "classification" else None
+    # stratification requires every class to have >= 2 members; a target
+    # column with singleton classes (wrong/high-cardinality column choice)
+    # would otherwise raise and fail every candidate outright.
+    can_stratify = task_type == "classification" and df[target_column].value_counts().min() >= 2
+    stratify = df[target_column] if can_stratify else None
     X_train, X_test, y_train, y_test = train_test_split(
         df[feature_cols], df[target_column], test_size=0.2, random_state=0, stratify=stratify
     )
