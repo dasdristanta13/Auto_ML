@@ -35,7 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.export.script_export import generate_training_script
-from src.graph.build_graph import build_intake_graph, build_main_graph
+from src.graph.build_graph import build_intake_graph, build_prep_graph, build_train_graph
 from src.insights.auto_insights import generate_insights
 from src.llm.tracing import read_trace
 from src.state import PipelineState, new_state
@@ -49,7 +49,8 @@ _runs: dict[str, dict[str, Any]] = {}
 _lock = threading.Lock()
 
 _intake_graph = build_intake_graph()
-_main_graph = build_main_graph()
+_prep_graph = build_prep_graph()
+_train_graph = build_train_graph()
 
 
 def _json_safe(obj: Any) -> Any:
@@ -98,10 +99,18 @@ def _run_intake(run_id: str) -> None:
     _stream_graph(run_id, _intake_graph, lambda state: "awaiting_confirmation")
 
 
-def _run_main(run_id: str) -> None:
+def _run_prep(run_id: str) -> None:
     _stream_graph(
         run_id,
-        _main_graph,
+        _prep_graph,
+        lambda state: "failed" if state.get("status") == "failed" else "awaiting_feature_approval",
+    )
+
+
+def _run_train(run_id: str) -> None:
+    _stream_graph(
+        run_id,
+        _train_graph,
         lambda state: "completed" if state.get("status") == "completed" else "failed",
     )
 
@@ -141,8 +150,10 @@ _STAGE_MESSAGES = {
     "understand_usecase": "Interpreted the use case into a task specification.",
     "confirm": "Task specification confirmed — compute-heavy work unlocked.",
     "leakage_check": "Checked for columns that may leak information about the target.",
-    "feature_engineering": "Planned feature transformations (imputation, encoding, scaling).",
-    "apply_feature_plan": "Applied the feature plan to the dataset.",
+    "eda": "Ran automated exploratory data analysis to ground the feature plan in this specific dataset.",
+    "feature_engineering": "Planned feature transformations (imputation, encoding, scaling), informed by the EDA.",
+    "feature_approval": "Feature engineering plan approved — proceeding to training.",
+    "apply_feature_plan": "Applied the approved feature plan to the dataset.",
     "model_selection": "Selected candidate models suited to this task and data.",
     "dispatch_training": "Dispatched training jobs for each candidate model.",
     "poll_training": "Training in progress.",
@@ -234,6 +245,9 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
                 "enabled": state.get("cv_enabled", True),
                 "requested_folds": state.get("cv_folds", 5),
             },
+            "eda_report": state.get("eda_report"),
+            "resampling_suggestion": state.get("resampling_suggestion"),
+            "resampling_plan": state.get("resampling_plan"),
             "profile_summary": {
                 "row_count": state.get("profile", {}).get("row_count"),
                 "column_count": state.get("profile", {}).get("column_count"),
@@ -332,7 +346,44 @@ def confirm_run(run_id: str, body: ConfirmRequest) -> dict[str, Any]:
         entry["status"] = "running"
         _record_event(entry, "confirm")
 
-    threading.Thread(target=_run_main, args=(run_id,), daemon=True).start()
+    threading.Thread(target=_run_prep, args=(run_id,), daemon=True).start()
+    return {"run_id": run_id, "status": "running"}
+
+
+class FeatureApprovalRequest(BaseModel):
+    approved_step_indices: list[int]
+    resampling_enabled: bool = False
+    resampling_method: str = "none"
+
+
+_VALID_RESAMPLING_METHODS = {"none", "smote", "random_oversample", "random_undersample"}
+
+
+@app.post("/api/runs/{run_id}/approve-features")
+def approve_features(run_id: str, body: FeatureApprovalRequest) -> dict[str, Any]:
+    entry = _get_entry(run_id)
+    with _lock:
+        if entry["status"] != "awaiting_feature_approval":
+            raise HTTPException(status_code=409, detail=f"run is '{entry['status']}', not awaiting feature approval")
+        if body.resampling_method not in _VALID_RESAMPLING_METHODS:
+            raise HTTPException(status_code=400, detail=f"unknown resampling_method '{body.resampling_method}'")
+
+        state = entry["state"]
+        plan = dict(state.get("feature_plan") or {})
+        all_steps = plan.get("steps", [])
+        approved = {i for i in body.approved_step_indices if 0 <= i < len(all_steps)}
+        plan["steps"] = [step for i, step in enumerate(all_steps) if i in approved]
+        state["feature_plan"] = plan
+        state["feature_plan_approved"] = True
+        state["needs_feature_approval"] = False
+        state["resampling_plan"] = {
+            "enabled": body.resampling_enabled and body.resampling_method != "none",
+            "method": body.resampling_method if body.resampling_enabled else "none",
+        }
+        entry["status"] = "running"
+        _record_event(entry, "feature_approval")
+
+    threading.Thread(target=_run_train, args=(run_id,), daemon=True).start()
     return {"run_id": run_id, "status": "running"}
 
 
@@ -344,10 +395,10 @@ def cancel_run(run_id: str) -> dict[str, Any]:
     no further stages will start."""
     entry = _get_entry(run_id)
     with _lock:
-        if entry["status"] not in ("profiling", "running", "awaiting_confirmation"):
+        if entry["status"] not in ("profiling", "running", "awaiting_confirmation", "awaiting_feature_approval"):
             raise HTTPException(status_code=409, detail=f"run is '{entry['status']}', nothing to cancel")
         entry["cancel_requested"] = True
-        if entry["status"] == "awaiting_confirmation":
+        if entry["status"] in ("awaiting_confirmation", "awaiting_feature_approval"):
             entry["status"] = "cancelled"
             entry["finished_at"] = time.time()
     return {"run_id": run_id, "status": "cancelling"}
@@ -425,5 +476,18 @@ def get_trace(run_id: str) -> list[dict[str, Any]]:
     return _json_safe(read_trace(run_id))
 
 
+class NoCacheStaticFiles(StaticFiles):
+    """A local dev tool whose frontend gets rewritten constantly — browsers
+    silently serving a stale cached app.js/index.html across those changes
+    looks exactly like a broken feature (e.g. a UI list that stops updating)
+    when the real cause is a never-refetched asset. Disable caching entirely
+    rather than debug that class of bug repeatedly."""
+
+    async def get_response(self, path: str, scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+
 # Serve the frontend last so /api/* wins routing.
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+app.mount("/", NoCacheStaticFiles(directory="frontend", html=True), name="frontend")

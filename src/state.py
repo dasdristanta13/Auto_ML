@@ -42,6 +42,10 @@ class FeatureStep(BaseModel):
     # before it is ever executed.
     code: Optional[str] = None
     rationale: str = ""
+    # provenance for the feature-approval UI: "llm" (feature_engineering_node's
+    # own proposal) vs "eda" (deterministic completeness-floor fill-in from
+    # src/profiling/eda.py, mirroring model_selection_node's candidate floor).
+    source: Literal["llm", "eda"] = "llm"
 
 
 class FeaturePlan(BaseModel):
@@ -79,6 +83,8 @@ class TrainingResult(BaseModel):
     cv_folds: int = 0
     cv_metrics: dict[str, CVMetric] = Field(default_factory=dict)
     cv_note: Optional[str] = None
+    resampling_applied: Optional[str] = None  # "smote" | "random_oversample" | "random_undersample" | None
+    resampling_note: Optional[str] = None  # explains an auto-fallback (e.g. SMOTE -> random oversampling)
 
 
 class PipelineState(TypedDict, total=False):
@@ -94,9 +100,15 @@ class PipelineState(TypedDict, total=False):
     needs_human_confirmation: bool
     human_confirmed: bool
 
+    eda_report: dict[str, Any]  # {"insights": [...], "suggested_steps": [...]} — src/profiling/eda.py
+    resampling_suggestion: dict[str, Any]  # EDA's recommendation; resampling_plan below is the user's actual choice
+    resampling_plan: dict[str, Any]  # {"enabled": bool, "method": "smote"|"random_oversample"|"random_undersample"|"none"}
+
     feature_plan: dict[str, Any]  # FeaturePlan.model_dump()
     feature_plan_valid: bool
     feature_plan_feedback: str  # fed back into the prompt on retry
+    needs_feature_approval: bool
+    feature_plan_approved: bool
     transformed_dataset_path: str
 
     candidate_models: list[dict[str, Any]]
@@ -124,6 +136,9 @@ def new_state(run_id: str, dataset_path: str, use_case_description: str) -> Pipe
         needs_human_confirmation=False,
         human_confirmed=False,
         feature_plan_valid=False,
+        needs_feature_approval=False,
+        feature_plan_approved=False,
+        resampling_plan={"enabled": False, "method": "none"},
         candidate_models=[],
         cv_enabled=True,
         cv_folds=5,

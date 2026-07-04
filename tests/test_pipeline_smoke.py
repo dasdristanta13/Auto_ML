@@ -54,6 +54,8 @@ def _fake_generate(self, run_id, node, system_prompt, user_prompt, json_schema=N
 
 def test_full_pipeline_completes_end_to_end(tmp_path, monkeypatch):
     monkeypatch.setattr(LLMClient, "generate", _fake_generate)
+    # the CLI's feature_approval_checkpoint_node otherwise blocks on stdin input()
+    monkeypatch.setenv("AUTOML_AUTO_APPROVE_FEATURES", "1")
 
     rng = np.random.default_rng(0)
     n = 300

@@ -399,8 +399,19 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .checkbox-inline input[type="checkbox"] { width: 16px; height: 16px; }
 .cv-folds-label input[type="number"] { width: 64px; }
 .cv-folds-label input[type="number"]:disabled { opacity: 0.5; }
-.cv-config-chip { margin: 0 0 var(--sp-2); }
+.chip-row { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin: 0 0 var(--sp-2); }
 .cv-config-chip:empty { display: none; }
+
+/* ================= feature-approval checkpoint ================= */
+
+.feature-step-list { margin-top: 4px; }
+.feature-step-list li { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg-surface-raised); }
+.feature-step-list li input[type="checkbox"] { margin-top: 3px; width: 16px; height: 16px; flex: none; }
+.feature-step-list .step-op { font-weight: 650; }
+.feature-step-list .step-source { margin-left: 6px; }
+.feature-step-list .step-rationale { display: block; color: var(--text-secondary); font-size: var(--text-xs); margin-top: 2px; }
+.resampling-block select { font: inherit; color: var(--text-primary); background: var(--bg-surface-raised); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 8px 10px; }
+.resampling-block select:disabled { opacity: 0.5; }
 select, textarea, input[type="text"], input[type="number"] {
   font: inherit; color: var(--text-primary);
   background: var(--bg-surface-raised);

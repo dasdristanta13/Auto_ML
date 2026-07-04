@@ -202,6 +202,33 @@ def _cross_validate(
     return {"folds": folds, "metrics": metrics, "note": None}
 
 
+def _build_resampler(method: str, y: pd.Series) -> tuple[Optional[Any], Optional[str], Optional[str]]:
+    """Returns (resampler, applied_method, note). SMOTE needs k_neighbors <
+    the minority class size; auto-reduces it and falls back to random
+    oversampling if even 2 neighbors aren't available — same "auto-adjust
+    and explain, never silently omit" pattern as the CV fold auto-reduction
+    above. `applied_method` reflects what actually ran (may differ from the
+    requested `method` after a fallback)."""
+    from imblearn.over_sampling import SMOTE, RandomOverSampler
+    from imblearn.under_sampling import RandomUnderSampler
+
+    if method == "smote":
+        minority_count = int(y.value_counts().min())
+        k = min(5, minority_count - 1)
+        if k < 1:
+            note = (
+                f"SMOTE needs at least 2 minority-class samples (had {minority_count}); used random "
+                "oversampling instead."
+            )
+            return RandomOverSampler(random_state=0), "random_oversample", note
+        return SMOTE(k_neighbors=k, random_state=0), "smote", None
+    if method == "random_oversample":
+        return RandomOverSampler(random_state=0), "random_oversample", None
+    if method == "random_undersample":
+        return RandomUnderSampler(random_state=0), "random_undersample", None
+    return None, None, None
+
+
 def _run_job(
     run_id: str,
     dataset_path: str,
@@ -213,6 +240,8 @@ def _run_job(
     time_column: Optional[str],
     cv_enabled: bool,
     cv_folds: Optional[int],
+    resampling_enabled: bool,
+    resampling_method: str,
 ) -> None:
     start = time.monotonic()
     _registry[run_id]["status"] = "running"
@@ -236,26 +265,43 @@ def _run_job(
         X_test_numeric = X_test[X_train_numeric.columns].fillna(0)
 
         estimator = _build_estimator(library, estimator_name, hyperparams)
+
+        resampler, resampling_applied, resampling_note = (None, None, None)
+        if resampling_enabled and resampling_method != "none" and task_type == "classification":
+            resampler, resampling_applied, resampling_note = _build_resampler(resampling_method, y_train)
+
+        if resampler is not None:
+            from imblearn.pipeline import Pipeline as ImbPipeline
+
+            # imblearn's Pipeline only resamples during .fit() — .predict()
+            # and cross_validate()'s held-out scoring pass through untouched,
+            # which is exactly what keeps synthetic/duplicated rows out of
+            # the test fold (no leakage across the train/test or CV boundary).
+            fit_estimator = ImbPipeline([("resample", resampler), ("model", estimator)])
+        else:
+            fit_estimator = estimator
+
         if cv_enabled:
             cv_folds_requested = cv_folds if cv_folds is not None else _runtime_config()["cv_folds"]
-            cv_result = _cross_validate(estimator, X_train_numeric, y_train, task_type, time_column, cv_folds_requested)
+            cv_result = _cross_validate(fit_estimator, X_train_numeric, y_train, task_type, time_column, cv_folds_requested)
         else:
             cv_result = {"folds": 0, "metrics": {}, "note": "cross-validation disabled for this run"}
 
-        estimator.fit(X_train_numeric, y_train)
-        y_pred = estimator.predict(X_test_numeric)
+        fit_estimator.fit(X_train_numeric, y_train)
+        y_pred = fit_estimator.predict(X_test_numeric)
         y_proba = None
-        if task_type == "classification" and hasattr(estimator, "predict_proba"):
-            proba = estimator.predict_proba(X_test_numeric)
+        if task_type == "classification" and hasattr(fit_estimator, "predict_proba"):
+            proba = fit_estimator.predict_proba(X_test_numeric)
             if proba.shape[1] == 2:
                 y_proba = proba[:, 1]
 
         metrics = _evaluate(task_type, y_test, y_pred, y_proba)
-        feature_importance = _feature_importance(estimator, list(X_train_numeric.columns))
+        fitted_model = fit_estimator.named_steps["model"] if resampler is not None else fit_estimator
+        feature_importance = _feature_importance(fitted_model, list(X_train_numeric.columns))
 
         ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
         model_path = ARTIFACT_DIR / f"{run_id}.joblib"
-        joblib.dump({"estimator": estimator, "label_encoder": label_encoder, "feature_columns": list(X_train_numeric.columns)}, model_path)
+        joblib.dump({"estimator": fit_estimator, "label_encoder": label_encoder, "feature_columns": list(X_train_numeric.columns)}, model_path)
 
         _registry[run_id].update(
             status="succeeded",
@@ -266,6 +312,8 @@ def _run_job(
             cv_folds=cv_result["folds"],
             cv_metrics=cv_result["metrics"],
             cv_note=cv_result["note"],
+            resampling_applied=resampling_applied,
+            resampling_note=resampling_note,
         )
     except Exception as exc:  # noqa: BLE001 - failure surfaced via registry, not raised across the thread boundary
         _registry[run_id].update(
@@ -287,6 +335,8 @@ def train_model(
     time_column: Optional[str] = None,
     cv_enabled: bool = True,
     cv_folds: Optional[int] = None,
+    resampling_enabled: bool = False,
+    resampling_method: str = "none",
 ) -> str:
     """Dispatch an async training job for one candidate model and return its
     run_id IMMEDIATELY (does not block on training completion). Use
@@ -296,7 +346,11 @@ def train_model(
     so the train/test split is chronological rather than random. `cv_enabled`/
     `cv_folds` are the user's choice at the confirm checkpoint (folds defaults
     to config/runtime.yaml's cv_folds when not given); set cv_enabled=False to
-    skip k-fold cross-validation entirely for this run.
+    skip k-fold cross-validation entirely for this run. `resampling_enabled`/
+    `resampling_method` ("smote" | "random_oversample" | "random_undersample")
+    are the user's class-balancing choice from the feature-approval checkpoint
+    — applied to the training fold only (classification tasks only; ignored
+    for regression), never to the held-out test/CV fold, so it can't leak.
     """
     run_id = str(uuid.uuid4())
     _registry[run_id] = {
@@ -310,6 +364,8 @@ def train_model(
         "cv_folds": 0,
         "cv_metrics": {},
         "cv_note": None,
+        "resampling_applied": None,
+        "resampling_note": None,
     }
     future = _get_executor().submit(
         _run_job,
@@ -323,6 +379,8 @@ def train_model(
         time_column,
         cv_enabled,
         cv_folds,
+        resampling_enabled,
+        resampling_method,
     )
     _futures[run_id] = future
     return run_id
@@ -332,13 +390,18 @@ def train_model(
 def poll_training_job(run_id: str) -> dict[str, Any]:
     """Return the current status snapshot for a previously dispatched training
     run_id: {run_id, candidate_name, status, metrics, error, model_path,
-    feature_importance, cv_folds, cv_metrics, cv_note}. status is one of
-    "pending", "running", "succeeded", "failed". feature_importance is a
-    best-effort ranked list (may be empty for estimators that expose neither
-    feature_importances_ nor coef_). cv_metrics is {metric: {mean, std}}
-    from k-fold cross-validation on the training split (cv_folds may be
-    auto-reduced from config/runtime.yaml's requested value, or 0 with
-    cv_note explaining why if cross-validation wasn't possible).
+    feature_importance, cv_folds, cv_metrics, cv_note, resampling_applied,
+    resampling_note}. status is one of "pending", "running", "succeeded",
+    "failed". feature_importance is a best-effort ranked list (may be empty
+    for estimators that expose neither feature_importances_ nor coef_).
+    cv_metrics is {metric: {mean, std}} from k-fold cross-validation on the
+    training split (cv_folds may be auto-reduced from config/runtime.yaml's
+    requested value, or 0 with cv_note explaining why if cross-validation
+    wasn't possible). resampling_applied is the class-balancing method that
+    actually ran ("smote"/"random_oversample"/"random_undersample"), or None
+    if resampling wasn't requested/applicable; resampling_note explains an
+    auto-fallback (e.g. SMOTE -> random oversampling when the minority class
+    was too small).
     """
     if run_id not in _registry:
         raise ValueError(f"unknown run_id '{run_id}'")

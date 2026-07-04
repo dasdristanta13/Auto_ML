@@ -24,6 +24,14 @@ combination of the structured ops below can express the transform:
 Any column flagged in leakage_flags with severity "high" MUST be dropped
 unless there is a clear, stated reason not to (explain in plan_rationale if so).
 
+A deterministic exploratory-data-analysis pass has already inspected this
+dataset (see EDA below) and computed concrete suggested_steps per column —
+treat these as a strong, data-grounded prior. You do not need to restate a
+suggestion verbatim (any column you don't address will automatically keep
+the EDA's suggestion as a fallback), but you SHOULD deviate from one
+deliberately when the task/profile calls for it, and explain why in that
+step's rationale.
+
 ## Task specification
 {{TASK_SPEC_JSON}}
 
@@ -32,5 +40,8 @@ unless there is a clear, stated reason not to (explain in plan_rationale if so).
 
 ## Dataset profile
 {{PROFILE_JSON}}
+
+## Automated EDA findings + suggested steps
+{{EDA_JSON}}
 
 {{PRIOR_ATTEMPT_FEEDBACK}}

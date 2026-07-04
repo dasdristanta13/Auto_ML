@@ -164,6 +164,42 @@
         <ul class="callout-list" id="leakage-list"></ul>
       </div>
 
+      <!-- feature engineering approval checkpoint -->
+      <div class="card checkpoint hidden" id="feature-approval-card">
+        <h3>
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+          Review the feature engineering plan
+        </h3>
+        <p class="muted">Automated data analysis grounded these suggestions in your specific dataset — uncheck anything you don't want applied.</p>
+
+        <ul class="callout-list" id="eda-insights-list"></ul>
+
+        <div class="field">
+          <span>Suggested feature steps</span>
+          <ul class="callout-list feature-step-list" id="feature-step-list"></ul>
+        </div>
+
+        <div class="field resampling-block hidden" id="resampling-block">
+          <span>Class balancing</span>
+          <div class="cv-controls">
+            <label class="checkbox-inline">
+              <input type="checkbox" id="resampling-enabled-input" />
+              Apply resampling to the training data
+            </label>
+            <select id="resampling-method-select">
+              <option value="smote">SMOTE (synthetic oversampling)</option>
+              <option value="random_oversample">Random oversampling</option>
+              <option value="random_undersample">Random undersampling</option>
+            </select>
+          </div>
+          <p class="muted small" id="resampling-reason"></p>
+        </div>
+
+        <div class="btn-row">
+          <button type="button" class="btn primary" id="approve-features-btn">Approve &amp; continue</button>
+        </div>
+      </div>
+
       <!-- dashboard grid -->
       <section class="dash-grid">
         <div class="card hidden" id="insights-card">
@@ -189,7 +225,10 @@
             <h3>Model comparison</h3>
             <span class="muted small" id="results-sub"></span>
           </div>
-          <div class="chip cv-config-chip" id="cv-config-chip"></div>
+          <div class="chip-row">
+            <div class="chip cv-config-chip" id="cv-config-chip"></div>
+            <div class="chip cv-config-chip hidden" id="resampling-config-chip"></div>
+          </div>
           <div class="table-scroll"><table class="results-table" id="results-table"></table></div>
         </div>
 

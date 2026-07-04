@@ -4,6 +4,7 @@ live in src/agents/ (CLAUDE.md convention)."""
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ import pandas as pd
 import yaml
 from sklearn.preprocessing import MinMaxScaler, OrdinalEncoder, RobustScaler, StandardScaler
 
+from src.profiling.eda import run_eda
 from src.profiling.leakage import detect_target_leakage
 from src.profiling.profile import profile_dataset
 from src.sandbox.execute import SandboxExecutionError, SandboxTimeoutError, SandboxValidationError, dry_run, run_on_full_dataset
@@ -68,6 +70,58 @@ def leakage_check_node(state: PipelineState) -> PipelineState:
     df = pd.read_csv(state["dataset_path"])
     target_column = state.get("task_spec", {}).get("target_column")
     state["leakage_flags"] = detect_target_leakage(df, target_column) if target_column else []
+    return state
+
+
+def eda_node(state: PipelineState) -> PipelineState:
+    """Deterministic exploratory analysis (src/profiling/eda.py) — feeds the
+    feature_engineering node's prompt and is shown to the user for approval
+    before anything gets applied."""
+    df = pd.read_csv(state["dataset_path"])
+    result = run_eda(df, state.get("profile", {}), state.get("task_spec", {}))
+    state["eda_report"] = {"insights": result["insights"], "suggested_steps": result["suggested_steps"]}
+    state["resampling_suggestion"] = result["resampling_suggestion"]
+    return state
+
+
+def feature_approval_checkpoint_node(state: PipelineState) -> PipelineState:
+    """CLI-only checkpoint (the API pauses between build_prep_graph and
+    build_train_graph instead — see src/api/server.py). Shows the EDA-informed
+    feature plan and any resampling suggestion, lets the user approve/reject
+    individual steps and the resampling choice via stdin.
+
+    Set AUTOML_AUTO_APPROVE_FEATURES=1 to accept every suggested step as-is
+    and decline resampling without prompting — used by automated tests so
+    this node never blocks on input() (mirrors AUTOML_MOCK_LLM's convention)."""
+    plan = dict(state.get("feature_plan") or {})
+    steps = plan.get("steps", [])
+    resampling_suggestion = state.get("resampling_suggestion") or {"suggested": False, "method": "none"}
+
+    if os.environ.get("AUTOML_AUTO_APPROVE_FEATURES") == "1":
+        state["feature_plan_approved"] = True
+        state["resampling_plan"] = {"enabled": False, "method": "none"}
+        return state
+
+    print("\n--- Feature engineering plan (review before it's applied) ---")
+    approved_steps = []
+    for i, step in enumerate(steps):
+        origin = "data analysis" if step.get("source") == "eda" else "AI planner"
+        print(f"[{i}] {step['op']} on {step['columns']} ({origin}): {step.get('rationale', '')}")
+        answer = input("    Apply this step? [Y/n]: ").strip().lower()
+        if answer not in ("n", "no"):
+            approved_steps.append(step)
+    plan["steps"] = approved_steps
+    state["feature_plan"] = plan
+
+    resampling_enabled, resampling_method = False, "none"
+    if resampling_suggestion.get("suggested"):
+        print(f"\nSuggested: {resampling_suggestion.get('reason')}")
+        method = resampling_suggestion.get("method", "smote")
+        answer = input(f"Apply {method} to balance classes during training? [y/N]: ").strip().lower()
+        if answer in ("y", "yes"):
+            resampling_enabled, resampling_method = True, method
+    state["resampling_plan"] = {"enabled": resampling_enabled, "method": resampling_method}
+    state["feature_plan_approved"] = True
     return state
 
 
@@ -164,6 +218,7 @@ def dispatch_training_node(state: PipelineState) -> PipelineState:
     task_spec = state.get("task_spec", {})
     cv_enabled = state.get("cv_enabled", True)
     cv_folds = state.get("cv_folds", 5)
+    resampling_plan = state.get("resampling_plan") or {"enabled": False, "method": "none"}
     run_ids = []
     for candidate in state.get("candidate_models", []):
         run_id = train_model.invoke(
@@ -177,6 +232,8 @@ def dispatch_training_node(state: PipelineState) -> PipelineState:
                 "task_type": task_spec["task_type"],
                 "cv_enabled": cv_enabled,
                 "cv_folds": cv_folds,
+                "resampling_enabled": resampling_plan.get("enabled", False),
+                "resampling_method": resampling_plan.get("method", "none"),
             }
         )
         run_ids.append(run_id)

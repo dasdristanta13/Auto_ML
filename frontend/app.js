@@ -32,7 +32,9 @@ const STAGES = [
   { node: "understand_usecase", label: "Understanding", icon: "chat" },
   { node: "confirm", label: "Your review", icon: "userCheck" },
   { node: "leakage_check", label: "Leakage check", icon: "search" },
+  { node: "eda", label: "Data exploration", icon: "bulb" },
   { node: "feature_engineering", label: "Feature plan", icon: "sliders" },
+  { node: "feature_approval", label: "Your review", icon: "userCheck" },
   { node: "apply_feature_plan", label: "Transform", icon: "grid" },
   { node: "model_selection", label: "Model search", icon: "layers" },
   { node: "dispatch_training", label: "Dispatch", icon: "send" },
@@ -270,13 +272,17 @@ function render(run) {
   badge.className = `status-badge ${run.status}`;
   $("status-badge-text").textContent = run.status.replaceAll("_", " ");
 
-  $("cancel-btn").classList.toggle("hidden", !["profiling", "running", "awaiting_confirmation"].includes(run.status));
+  $("cancel-btn").classList.toggle(
+    "hidden",
+    !["profiling", "running", "awaiting_confirmation", "awaiting_feature_approval"].includes(run.status)
+  );
 
   renderStatCards(run);
   renderStageTracker(run);
   renderTrainProgress(run);
   renderConfirm(run);
   renderLeakage(run);
+  renderFeatureApproval(run);
   renderDatasetSummary(run);
   renderInsights(run);
   renderResults(run);
@@ -371,13 +377,16 @@ function renderStageTracker(run) {
     ? `finished in ${formatDuration(run.elapsed_seconds)}`
     : run.status === "awaiting_confirmation"
       ? "paused — waiting for your confirmation"
-      : "running";
+      : run.status === "awaiting_feature_approval"
+        ? "paused — waiting for your feature-plan review"
+        : "running";
 
+  const CHECKPOINT_STAGES = { confirm: "awaiting_confirmation", feature_approval: "awaiting_feature_approval" };
   let activeAssigned = false;
   for (const stage of STAGES) {
     const li = document.createElement("li");
     li.className = "stage";
-    const isConfirm = stage.node === "confirm";
+    const isCheckpoint = CHECKPOINT_STAGES[stage.node] === run.status;
     const stageDone = stage.node === "poll_training" ? done.has("evaluate") : done.has(stage.node);
 
     let stateClass = "pending";
@@ -385,7 +394,7 @@ function renderStageTracker(run) {
     if (stageDone) {
       stateClass = "done";
       statusText = "Completed";
-    } else if (isConfirm && run.status === "awaiting_confirmation") {
+    } else if (isCheckpoint) {
       stateClass = "needs_input";
       statusText = "Needs input";
       activeAssigned = true;
@@ -517,6 +526,92 @@ $("confirm-form").addEventListener("submit", async (e) => {
   $("target-select").dataset.filled = "";
 });
 
+/* ================= feature engineering approval ================= */
+
+function renderFeatureApproval(run) {
+  const card = $("feature-approval-card");
+  if (run.status !== "awaiting_feature_approval") {
+    card.classList.add("hidden");
+    return;
+  }
+  card.classList.remove("hidden");
+
+  const list = $("feature-step-list");
+  if (!list.dataset.filled) {
+    const eda = run.eda_report || {};
+    $("eda-insights-list").innerHTML = (eda.insights || [])
+      .map((i) => `<li class="insight-${i.tone}">${ICONS[INSIGHT_ICON[i.tone]] || ICONS.sparkle}<span>${escapeHtml(i.message)}</span></li>`)
+      .join("");
+
+    const steps = (run.feature_plan || {}).steps || [];
+    list.innerHTML = steps.length
+      ? steps
+          .map((step, i) => {
+            const origin = step.source === "eda" ? "data analysis" : "AI planner";
+            const cols = (step.columns || []).map(escapeHtml).join(", ");
+            return `<li>
+              <input type="checkbox" data-step-index="${i}" checked />
+              <span>
+                <span class="step-op">${escapeHtml(step.op)}</span> on <span class="mono">${cols}</span>
+                <span class="chip inferred step-source">${escapeHtml(origin)}</span>
+                <span class="step-rationale">${escapeHtml(step.rationale || "")}</span>
+              </span>
+            </li>`;
+          })
+          .join("")
+      : `<li><span>No transformation steps were suggested — training will use the raw numeric columns as-is.</span></li>`;
+
+    const resampling = run.resampling_suggestion || { suggested: false };
+    const block = $("resampling-block");
+    const spec = run.task_spec || {};
+    if (spec.task_type === "classification") {
+      block.classList.remove("hidden");
+      $("resampling-enabled-input").checked = !!resampling.suggested;
+      $("resampling-method-select").value = resampling.method && resampling.method !== "none" ? resampling.method : "smote";
+      $("resampling-method-select").disabled = !resampling.suggested;
+      $("resampling-reason").textContent = resampling.suggested
+        ? resampling.reason
+        : "Not suggested for this dataset — enable manually if you still want to balance classes during training.";
+    } else {
+      block.classList.add("hidden");
+    }
+
+    list.dataset.filled = "1";
+  }
+}
+
+$("resampling-enabled-input").addEventListener("change", (e) => {
+  $("resampling-method-select").disabled = !e.target.checked;
+});
+
+$("approve-features-btn").addEventListener("click", async () => {
+  const approvedIndices = Array.from(document.querySelectorAll('#feature-step-list input[type="checkbox"]:checked')).map(
+    (el) => Number(el.dataset.stepIndex)
+  );
+  const resamplingEnabled = $("resampling-enabled-input").checked;
+  const body = {
+    approved_step_indices: approvedIndices,
+    resampling_enabled: resamplingEnabled,
+    resampling_method: resamplingEnabled ? $("resampling-method-select").value : "none",
+  };
+  const btn = $("approve-features-btn");
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/runs/${currentRunId}/approve-features`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    $("feature-approval-card").classList.add("hidden");
+    $("feature-step-list").dataset.filled = "";
+  } catch (err) {
+    alert("Approval failed: " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 /* ================= leakage ================= */
 
 function renderLeakage(run) {
@@ -616,6 +711,19 @@ function renderResults(run) {
   } else {
     cvChip.className = "chip cv-config-chip";
     cvChip.innerHTML = `Cross-validation disabled for this run`;
+  }
+
+  const resamplingChip = $("resampling-config-chip");
+  const resamplingPlan = run.resampling_plan || {};
+  if (resamplingPlan.enabled) {
+    const applied = results.find((r) => r.resampling_applied)?.resampling_applied || resamplingPlan.method;
+    const note = results.find((r) => r.resampling_note)?.resampling_note;
+    resamplingChip.classList.remove("hidden");
+    resamplingChip.className = "chip detected cv-config-chip";
+    resamplingChip.title = note || "";
+    resamplingChip.innerHTML = `${ICONS.check}${escapeHtml(applied.replaceAll("_", " "))} applied to training data`;
+  } else {
+    resamplingChip.classList.add("hidden");
   }
 
   const metricNames = [...new Set(results.flatMap((r) => Object.keys(r.metrics || {})))];
@@ -884,3 +992,6 @@ function escapeHtml(str) {
 }
 
 loadRecentRuns();
+// independent of the per-run poll loop, so the sidebar stays eventually
+// consistent regardless of which trigger points did or didn't fire
+setInterval(loadRecentRuns, 4000);
