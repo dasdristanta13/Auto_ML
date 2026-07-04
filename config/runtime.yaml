@@ -1,0 +1,27 @@
+# Runtime limits enforced across the pipeline. Nodes/routing must read from here,
+# never hardcode caps inline.
+
+retry:
+  max_retries: 3 # applies to any conditional edge that can loop back
+
+sandbox:
+  # Local dev stand-in for Docker/gVisor isolation (see src/sandbox/execute.py).
+  # Production deployments MUST replace this with a real container/microVM sandbox.
+  timeout_seconds: 10
+  max_memory_mb: 512
+  dry_run_sample_rows: 200
+  allow_network: false
+
+tools:
+  max_sample_rows: 20 # hard cap on any row-level data a tool may return to the LLM
+
+training:
+  # Local dev stand-in for Celery/Ray (see src/training/dispatch.py).
+  max_concurrent_jobs: 4
+  poll_interval_seconds: 2
+  poll_max_attempts: 150 # ~5 min wall clock at 2s interval before giving up
+  hyperparam_search_budget_seconds: 120
+
+budgets:
+  max_llm_calls_per_run: 40
+  max_tokens_per_run: 200000

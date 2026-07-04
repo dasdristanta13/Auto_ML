@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agentic AutoML</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">⬢</span>
+      <span class="brand-name">Agentic AutoML</span>
+    </div>
+    <span class="brand-sub">upload data → describe your goal → get a model, explained</span>
+  </header>
+
+  <main class="layout">
+    <!-- ============ new run ============ -->
+    <section id="new-run-card" class="card">
+      <h2>Start a new run</h2>
+      <form id="new-run-form">
+        <label class="dropzone" id="dropzone">
+          <input type="file" id="file-input" accept=".csv" hidden />
+          <span id="dropzone-label">
+            <strong>Drop a CSV here</strong> or click to browse
+          </span>
+        </label>
+        <label class="field">
+          <span>What do you want to predict?</span>
+          <textarea id="description" rows="3" required
+            placeholder="e.g. Predict which customers will churn next month"></textarea>
+        </label>
+        <button type="submit" class="btn primary" id="submit-btn" disabled>Run pipeline</button>
+      </form>
+      <div id="recent-runs" class="recent-runs"></div>
+    </section>
+
+    <!-- ============ active run ============ -->
+    <section id="run-view" class="hidden">
+      <div class="card run-header">
+        <div>
+          <h2 id="run-title">Run</h2>
+          <p id="run-desc" class="muted"></p>
+        </div>
+        <div class="run-header-right">
+          <span id="status-badge" class="badge">—</span>
+          <button class="btn ghost" id="new-run-btn">+ New run</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <ol class="timeline" id="timeline"></ol>
+      </div>
+
+      <!-- confirmation checkpoint -->
+      <div class="card checkpoint hidden" id="confirm-card">
+        <h3>Confirm the platform's understanding</h3>
+        <p class="muted" id="confirm-reason"></p>
+        <div id="dataset-summary" class="chips"></div>
+        <form id="confirm-form" class="confirm-grid">
+          <label class="field">
+            <span>Target column</span>
+            <select id="target-select" required></select>
+          </label>
+          <label class="field">
+            <span>Task type</span>
+            <select id="tasktype-select" required>
+              <option value="classification">Classification</option>
+              <option value="regression">Regression</option>
+              <option value="forecasting">Forecasting</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Success metric</span>
+            <select id="metric-select" required></select>
+          </label>
+          <button type="submit" class="btn primary">Confirm &amp; train</button>
+        </form>
+      </div>
+
+      <!-- leakage warnings -->
+      <div class="card warn hidden" id="leakage-card">
+        <h3>⚠ Possible target leakage <span class="muted small">(heuristic — not guaranteed complete)</span></h3>
+        <ul id="leakage-list"></ul>
+      </div>
+
+      <!-- results -->
+      <div class="card hidden" id="results-card">
+        <h3>Model results</h3>
+        <table class="results-table" id="results-table"></table>
+        <div class="result-actions">
+          <a class="btn primary" id="download-btn" href="#" download>Download best model</a>
+          <a class="btn ghost" id="trace-btn" href="#" target="_blank">View LLM audit trace</a>
+        </div>
+      </div>
+
+      <!-- report -->
+      <div class="card hidden" id="report-card">
+        <h3>Report</h3>
+        <div id="report-body" class="report-body"></div>
+      </div>
+
+      <!-- errors -->
+      <div class="card error hidden" id="error-card">
+        <h3>Issues encountered</h3>
+        <ul id="error-list"></ul>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

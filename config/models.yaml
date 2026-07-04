@@ -1,0 +1,38 @@
+# Which LLM provider+model powers each LangGraph node.
+# Switch providers per-node without touching code — src/llm/client.py reads this file.
+#
+# provider: one of "openai" | "openai" | "gemini"
+# model: the provider's model id
+#
+# API keys are read from environment variables (see .env.example), never hardcoded here.
+
+default:
+  provider: openai
+  model: gpt-5-nano
+  temperature: 0.0
+  max_tokens: 4096
+
+nodes:
+  understand_usecase:
+    provider: openai
+    model: gpt-5-nano
+    temperature: 0.0
+    max_tokens: 2048
+
+  feature_engineering:
+    provider: openai
+    model: gpt-5-nano
+    temperature: 0.0
+    max_tokens: 4096
+
+  model_selection:
+    provider: openai
+    model: gpt-5-nano
+    temperature: 0.0
+    max_tokens: 2048
+
+  report:
+    provider: openai
+    model: gpt-5-nano
+    temperature: 0.2
+    max_tokens: 4096
