@@ -136,6 +136,7 @@ def _profile_columns(state: PipelineState) -> list[dict[str, Any]]:
 _STAGE_MESSAGES = {
     "profile": "Profiled the dataset — schema, null rates, cardinality, and PII scan complete.",
     "understand_usecase": "Interpreted the use case into a task specification.",
+    "confirm": "Task specification confirmed — compute-heavy work unlocked.",
     "leakage_check": "Checked for columns that may leak information about the target.",
     "feature_engineering": "Planned feature transformations (imputation, encoding, scaling).",
     "apply_feature_plan": "Applied the feature plan to the dataset.",
@@ -145,6 +146,28 @@ _STAGE_MESSAGES = {
     "evaluate": "Evaluated all candidates and selected the best model.",
     "report": "Wrote the final report.",
 }
+
+
+def _stage_timeline(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per-stage completion time + duration, deduped: repeated nodes (the
+    poll_training loop) keep their first position but their latest timestamp.
+    The human confirmation checkpoint is its own recorded event, so waiting-
+    on-the-user time is attributed to 'confirm', not to the next stage."""
+    timeline: list[dict[str, Any]] = []
+    by_node: dict[str, dict[str, Any]] = {}
+    for event in entry["events"]:
+        node, timestamp = event["node"], event["timestamp"]
+        if node in by_node:
+            by_node[node]["completed_at"] = timestamp
+        else:
+            record = {"node": node, "completed_at": timestamp}
+            by_node[node] = record
+            timeline.append(record)
+    previous = entry["created_at"]
+    for record in timeline:
+        record["duration_seconds"] = round(max(record["completed_at"] - previous, 0), 1)
+        previous = record["completed_at"]
+    return timeline
 
 
 def _plain_language_events(state: PipelineState, stages_done: list[str]) -> list[dict[str, Any]]:
@@ -184,6 +207,12 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
     retry_count = state.get("retry_count", {})
     end_time = entry.get("finished_at") or time.time()
 
+    timeline = _stage_timeline(entry)
+    completed_at_by_node = {record["node"]: record["completed_at"] for record in timeline}
+    events = _plain_language_events(state, stages_done)
+    for event in events:
+        event["timestamp"] = completed_at_by_node.get(event["stage"])
+
     return _json_safe(
         {
             "run_id": run_id,
@@ -194,7 +223,8 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
             "elapsed_seconds": round(end_time - entry["created_at"], 1),
             "llm_call_count": len(read_trace(run_id)),
             "stages_done": stages_done,
-            "events": _plain_language_events(state, stages_done),
+            "stage_timeline": timeline,
+            "events": events,
             "retry_count": retry_count,
             "task_spec": state.get("task_spec"),
             "profile_summary": {
@@ -288,6 +318,7 @@ def confirm_run(run_id: str, body: ConfirmRequest) -> dict[str, Any]:
         state["needs_human_confirmation"] = False
         state["human_confirmed"] = True
         entry["status"] = "running"
+        _record_event(entry, "confirm")
 
     threading.Thread(target=_run_main, args=(run_id,), daemon=True).start()
     return {"run_id": run_id, "status": "running"}
