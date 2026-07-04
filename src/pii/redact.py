@@ -76,7 +76,9 @@ def detect_pii_columns(df: pd.DataFrame) -> dict[str, dict[str, str]]:
         if name_hit:
             detected[col] = {"pii_type": name_hit, "detection_method": "name"}
             continue
-        if df[col].dtype == object:
+        # pandas >= 3.0 defaults plain string columns to a "str" dtype
+        # rather than "object" — check both so pattern detection still runs.
+        if pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col]):
             pattern_hit = _pattern_hint(df[col])
             if pattern_hit:
                 detected[col] = {"pii_type": pattern_hit, "detection_method": "pattern"}

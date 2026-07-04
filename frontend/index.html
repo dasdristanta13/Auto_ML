@@ -4,109 +4,179 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Agentic AutoML</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ctext y='18' font-size='20'%3E%E2%AC%A2%3C/text%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="brand-mark">⬢</span>
-      <span class="brand-name">Agentic AutoML</span>
+      <span class="brand-mark" aria-hidden="true">⬢</span>
+      <span>Agentic AutoML</span>
     </div>
     <span class="brand-sub">upload data → describe your goal → get a model, explained</span>
   </header>
 
-  <main class="layout">
-    <!-- ============ new run ============ -->
-    <section id="new-run-card" class="card">
-      <h2>Start a new run</h2>
+  <!-- ============ intake screen (PRODUCT.md 3.1 + 3.2) ============ -->
+  <main class="layout" id="intake-view">
+    <section class="card">
+      <div class="intake-hero">
+        <h1>What do you want to predict or solve?</h1>
+        <p class="muted">Describe your goal in plain language, then attach the dataset. Nothing runs until you've confirmed what we understood.</p>
+      </div>
+
       <form id="new-run-form">
+        <label class="usecase-field field">
+          <span class="visually-hidden">Prediction goal</span>
+          <textarea id="description" class="usecase-input" rows="2" required
+            placeholder="e.g. Predict which customers will churn next month"></textarea>
+        </label>
+
         <label class="dropzone" id="dropzone">
           <input type="file" id="file-input" accept=".csv" hidden />
           <span id="dropzone-label">
             <strong>Drop a CSV here</strong> or click to browse
           </span>
         </label>
-        <label class="field">
-          <span>What do you want to predict?</span>
-          <textarea id="description" rows="3" required
-            placeholder="e.g. Predict which customers will churn next month"></textarea>
-        </label>
-        <button type="submit" class="btn primary" id="submit-btn" disabled>Run pipeline</button>
+
+        <div class="estimate-row" id="estimate-row"></div>
+
+        <div class="btn-row">
+          <button type="submit" class="btn primary" id="submit-btn" disabled>
+            <span>Run pipeline</span>
+          </button>
+        </div>
       </form>
-      <div id="recent-runs" class="recent-runs"></div>
     </section>
 
-    <!-- ============ active run ============ -->
-    <section id="run-view" class="hidden">
-      <div class="card run-header">
-        <div>
-          <h2 id="run-title">Run</h2>
-          <p id="run-desc" class="muted"></p>
-        </div>
-        <div class="run-header-right">
-          <span id="status-badge" class="badge">—</span>
-          <button class="btn ghost" id="new-run-btn">+ New run</button>
+    <section class="recent-runs">
+      <h3>Recent runs</h3>
+      <div class="recent-run-list" id="recent-runs"></div>
+    </section>
+  </main>
+
+  <!-- ============ live run + report (PRODUCT.md 3.3 + 3.4) ============ -->
+  <main class="layout wide hidden" id="run-view">
+    <div class="card run-header">
+      <div>
+        <h2 id="run-title">Run</h2>
+        <p class="muted" id="run-desc"></p>
+        <div class="run-meta">
+          <span id="meta-elapsed"></span>
+          <span id="meta-cost"></span>
         </div>
       </div>
-
-      <div class="card">
-        <ol class="timeline" id="timeline"></ol>
+      <div class="run-header-right">
+        <span id="status-badge" class="status-badge"><span class="dot"></span><span id="status-badge-text">—</span></span>
+        <button class="btn danger hidden" id="cancel-btn">Cancel run</button>
+        <button class="btn ghost" id="new-run-btn">+ New run</button>
       </div>
+    </div>
 
-      <!-- confirmation checkpoint -->
-      <div class="card checkpoint hidden" id="confirm-card">
-        <h3>Confirm the platform's understanding</h3>
-        <p class="muted" id="confirm-reason"></p>
-        <div id="dataset-summary" class="chips"></div>
-        <form id="confirm-form" class="confirm-grid">
-          <label class="field">
-            <span>Target column</span>
-            <select id="target-select" required></select>
-          </label>
-          <label class="field">
-            <span>Task type</span>
-            <select id="tasktype-select" required>
-              <option value="classification">Classification</option>
-              <option value="regression">Regression</option>
-              <option value="forecasting">Forecasting</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Success metric</span>
-            <select id="metric-select" required></select>
-          </label>
+    <!-- signature element -->
+    <div class="card">
+      <ol class="stage-tracker" id="stage-tracker"></ol>
+      <ul class="decision-log" id="decision-log"></ul>
+    </div>
+
+    <!-- confirmation checkpoint (PRODUCT.md 3.2 — editable, blocks until resolved) -->
+    <div class="card checkpoint hidden" id="confirm-card">
+      <h3>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+        Confirm before we run the pipeline
+      </h3>
+      <p class="muted" id="confirm-reason"></p>
+      <div class="chips" id="dataset-summary"></div>
+
+      <form id="confirm-form" class="confirm-grid">
+        <label class="field">
+          <span>Target column <span class="chip inferred field-tag">inferred</span></span>
+          <select id="target-select" required></select>
+        </label>
+        <label class="field">
+          <span>Task type <span class="chip inferred field-tag">inferred</span></span>
+          <select id="tasktype-select" required>
+            <option value="classification">Classification</option>
+            <option value="regression">Regression</option>
+            <option value="forecasting">Forecasting</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Success metric <span class="chip inferred field-tag">inferred</span></span>
+          <select id="metric-select" required></select>
+        </label>
+        <div class="btn-row">
           <button type="submit" class="btn primary">Confirm &amp; train</button>
-        </form>
+        </div>
+      </form>
+    </div>
+
+    <!-- leakage warnings -->
+    <div class="card warn hidden" id="leakage-card">
+      <h3>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+        Possible target leakage <span class="muted small">(heuristic — not guaranteed complete)</span>
+      </h3>
+      <ul class="callout-list" id="leakage-list"></ul>
+    </div>
+
+    <!-- results -->
+    <div class="card hidden" id="results-card">
+      <h3>Model comparison</h3>
+      <p class="muted small" id="results-sub"></p>
+      <div class="table-scroll"><table class="results-table" id="results-table"></table></div>
+    </div>
+
+    <!-- feature importance -->
+    <div class="card hidden" id="fi-card">
+      <h3>What drives this model's predictions</h3>
+      <div class="fi-list" id="fi-list"></div>
+    </div>
+
+    <!-- report + try-the-model, tabbed -->
+    <div class="card hidden" id="report-card">
+      <div class="tab-bar" role="tablist">
+        <button class="tab-btn active" id="tab-report-btn" type="button" role="tab" aria-selected="true">Report</button>
+        <button class="tab-btn" id="tab-test-btn" type="button" role="tab" aria-selected="false">Test the model</button>
       </div>
 
-      <!-- leakage warnings -->
-      <div class="card warn hidden" id="leakage-card">
-        <h3>⚠ Possible target leakage <span class="muted small">(heuristic — not guaranteed complete)</span></h3>
-        <ul id="leakage-list"></ul>
-      </div>
-
-      <!-- results -->
-      <div class="card hidden" id="results-card">
-        <h3>Model results</h3>
-        <table class="results-table" id="results-table"></table>
+      <div id="tab-report-panel" role="tabpanel">
+        <div id="report-lede" class="report-lede hidden"></div>
+        <div id="report-body" class="report-body"></div>
         <div class="result-actions">
           <a class="btn primary" id="download-btn" href="#" download>Download best model</a>
-          <a class="btn ghost" id="trace-btn" href="#" target="_blank">View LLM audit trace</a>
+          <a class="btn ghost" id="download-script-btn" href="#" download>Download training script</a>
+          <button class="btn ghost" id="trace-toggle-btn" type="button">View LLM audit trace</button>
         </div>
+        <details class="trace-details hidden" id="trace-details">
+          <summary>Raw LLM trace (technical)</summary>
+          <div class="trace-body" id="trace-body"></div>
+        </details>
       </div>
 
-      <!-- report -->
-      <div class="card hidden" id="report-card">
-        <h3>Report</h3>
-        <div id="report-body" class="report-body"></div>
+      <div id="tab-test-panel" class="hidden" role="tabpanel">
+        <p class="muted small">Runs the saved model locally against values you enter here — nothing leaves this machine.</p>
+        <form id="predict-form" class="predict-grid"></form>
+        <div class="btn-row">
+          <button type="submit" form="predict-form" class="btn primary">Predict</button>
+        </div>
+        <div id="predict-result" class="predict-result hidden"></div>
       </div>
+    </div>
 
-      <!-- errors -->
-      <div class="card error hidden" id="error-card">
-        <h3>Issues encountered</h3>
-        <ul id="error-list"></ul>
-      </div>
-    </section>
+    <!-- caveats — unmissable, not fine print -->
+    <div class="card caveats-card hidden" id="caveats-card">
+      <h3>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+        Caveats &amp; limitations
+      </h3>
+      <ul class="callout-list" id="caveats-list"></ul>
+    </div>
+
+    <!-- errors -->
+    <div class="card error-card hidden" id="error-card">
+      <h3>Issues encountered</h3>
+      <ul class="callout-list" id="error-list"></ul>
+    </div>
   </main>
 
   <script src="/app.js"></script>

@@ -108,6 +108,27 @@ def _split(
     return X_train, X_test, y_train, y_test
 
 
+_TOP_N_FEATURE_IMPORTANCE = 8
+
+
+def _feature_importance(estimator, feature_names: list[str]) -> list[dict[str, Any]]:
+    """Best-effort extraction for the report view's feature-importance chart
+    (PRODUCT.md 3.4). Tree ensembles expose feature_importances_ directly;
+    linear models expose coef_ (importance taken as |coef|, normalized to sum
+    to 1 so it reads the same way across model types)."""
+    if hasattr(estimator, "feature_importances_"):
+        raw = list(estimator.feature_importances_)
+    elif hasattr(estimator, "coef_"):
+        coef = estimator.coef_
+        raw = list(abs(coef[0]) if getattr(coef, "ndim", 1) > 1 else abs(coef))
+    else:
+        return []
+
+    total = sum(raw) or 1.0
+    ranked = sorted(zip(feature_names, raw), key=lambda pair: pair[1], reverse=True)
+    return [{"feature": name, "importance": round(value / total, 4)} for name, value in ranked[:_TOP_N_FEATURE_IMPORTANCE]]
+
+
 def _evaluate(task_type: str, y_test: pd.Series, y_pred, y_proba=None) -> dict[str, float]:
     if task_type == "classification":
         metrics = {
@@ -168,6 +189,7 @@ def _run_job(
                 y_proba = proba[:, 1]
 
         metrics = _evaluate(task_type, y_test, y_pred, y_proba)
+        feature_importance = _feature_importance(estimator, list(X_train_numeric.columns))
 
         ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
         model_path = ARTIFACT_DIR / f"{run_id}.joblib"
@@ -178,6 +200,7 @@ def _run_job(
             metrics=metrics,
             duration_seconds=time.monotonic() - start,
             model_path=str(model_path),
+            feature_importance=feature_importance,
         )
     except Exception as exc:  # noqa: BLE001 - failure surfaced via registry, not raised across the thread boundary
         _registry[run_id].update(
@@ -213,6 +236,7 @@ def train_model(
         "metrics": {},
         "error": None,
         "model_path": None,
+        "feature_importance": [],
     }
     future = _get_executor().submit(
         _run_job, run_id, dataset_path, target_column, task_type, library, estimator, hyperparams, time_column
@@ -224,9 +248,43 @@ def train_model(
 @tool
 def poll_training_job(run_id: str) -> dict[str, Any]:
     """Return the current status snapshot for a previously dispatched training
-    run_id: {run_id, candidate_name, status, metrics, error, model_path}.
-    status is one of "pending", "running", "succeeded", "failed".
+    run_id: {run_id, candidate_name, status, metrics, error, model_path,
+    feature_importance}. status is one of "pending", "running", "succeeded",
+    "failed". feature_importance is a best-effort ranked list (may be empty
+    for estimators that expose neither feature_importances_ nor coef_).
     """
     if run_id not in _registry:
         raise ValueError(f"unknown run_id '{run_id}'")
     return dict(_registry[run_id])
+
+
+def load_model_schema(model_path: str) -> dict[str, Any]:
+    """Feature columns the saved model expects — lets the frontend's 'test
+    the model' tab build an input form without hardcoding anything."""
+    bundle = joblib.load(model_path)
+    return {"feature_columns": bundle["feature_columns"]}
+
+
+def predict_one(model_path: str, values: dict[str, Any]) -> dict[str, Any]:
+    """Score a single user-supplied row against a saved model bundle. Missing
+    features are filled with 0, matching the fillna(0) convention used at
+    training time (see _run_job above)."""
+    bundle = joblib.load(model_path)
+    estimator = bundle["estimator"]
+    feature_columns = bundle["feature_columns"]
+    label_encoder = bundle.get("label_encoder")
+
+    row = pd.DataFrame([{col: values.get(col, 0) for col in feature_columns}])
+    raw_prediction = estimator.predict(row)[0]
+    prediction = (
+        label_encoder.inverse_transform([int(raw_prediction)])[0] if label_encoder is not None else raw_prediction
+    )
+
+    result: dict[str, Any] = {"prediction": prediction}
+    if hasattr(estimator, "predict_proba"):
+        proba = estimator.predict_proba(row)[0]
+        classes = estimator.classes_
+        if label_encoder is not None:
+            classes = label_encoder.inverse_transform(classes.astype(int))
+        result["probabilities"] = {str(c): float(p) for c, p in zip(classes, proba)}
+    return result
