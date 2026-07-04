@@ -36,6 +36,8 @@ let currentRunId = null;
 let currentRunCreatedAt = null;
 let currentRunStatus = null;
 let selectedFile = null;
+let lastRun = null;
+let predictFormLoadedFor = null;
 
 /* ---------- new run form ---------- */
 
@@ -163,6 +165,9 @@ function openRun(runId) {
   $("run-view").classList.remove("hidden");
   $("trace-details").classList.add("hidden");
   $("trace-body").textContent = "";
+  predictFormLoadedFor = null;
+  $("predict-result").classList.add("hidden");
+  switchTab("report");
   stopPolling();
   poll();
   pollTimer = setInterval(poll, 1500);
@@ -196,6 +201,7 @@ async function poll() {
 }
 
 function render(run) {
+  lastRun = run;
   currentRunCreatedAt = run.created_at;
   currentRunStatus = run.status;
 
@@ -435,6 +441,12 @@ function renderReport(run) {
   const hasModel = (run.best_model || {}).model_path;
   $("download-btn").style.display = hasModel ? "" : "none";
   $("download-btn").href = `/api/runs/${run.run_id}/model`;
+  $("download-script-btn").style.display = hasModel ? "" : "none";
+  $("download-script-btn").href = `/api/runs/${run.run_id}/script`;
+
+  if (document.getElementById("tab-test-btn").classList.contains("active")) {
+    loadPredictTab(run);
+  }
 }
 
 $("trace-toggle-btn").addEventListener("click", async () => {
@@ -447,6 +459,93 @@ $("trace-toggle-btn").addEventListener("click", async () => {
     $("trace-body").textContent = JSON.stringify(trace, null, 2);
   }
 });
+
+/* ---------- Report / Test the model tabs ---------- */
+
+function switchTab(name) {
+  const isReport = name === "report";
+  $("tab-report-btn").classList.toggle("active", isReport);
+  $("tab-report-btn").setAttribute("aria-selected", String(isReport));
+  $("tab-test-btn").classList.toggle("active", !isReport);
+  $("tab-test-btn").setAttribute("aria-selected", String(!isReport));
+  $("tab-report-panel").classList.toggle("hidden", !isReport);
+  $("tab-test-panel").classList.toggle("hidden", isReport);
+  if (!isReport && lastRun) loadPredictTab(lastRun);
+}
+$("tab-report-btn").addEventListener("click", () => switchTab("report"));
+$("tab-test-btn").addEventListener("click", () => switchTab("test"));
+
+async function loadPredictTab(run) {
+  if (!(run.best_model || {}).model_path) {
+    $("predict-form").innerHTML = `<p class="muted small">No trained model is available for this run — nothing to test.</p>`;
+    return;
+  }
+  if (predictFormLoadedFor === run.run_id) return;
+  predictFormLoadedFor = run.run_id;
+
+  const form = $("predict-form");
+  form.innerHTML = `<p class="muted small">Loading model inputs…</p>`;
+  try {
+    const schema = await (await fetch(`/api/runs/${run.run_id}/model/schema`)).json();
+    form.innerHTML = schema.feature_columns
+      .map(
+        (col) => `
+        <label class="field">
+          <span>${escapeHtml(col)}</span>
+          <input type="number" step="any" name="${escapeHtml(col)}" placeholder="0" />
+        </label>`
+      )
+      .join("");
+  } catch {
+    form.innerHTML = `<p class="muted small">Could not load model inputs for this run.</p>`;
+    predictFormLoadedFor = null;
+  }
+}
+
+$("predict-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const values = {};
+  for (const input of e.target.querySelectorAll("input[name]")) {
+    values[input.name] = input.value === "" ? 0 : Number(input.value);
+  }
+
+  const resultBox = $("predict-result");
+  resultBox.classList.remove("hidden", "is-error");
+  resultBox.innerHTML = `<p class="muted small">Scoring…</p>`;
+  try {
+    const res = await fetch(`/api/runs/${currentRunId}/predict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    renderPredictResult(data);
+  } catch (err) {
+    resultBox.classList.add("is-error");
+    resultBox.innerHTML = `<p>${escapeHtml(err.message)}</p>`;
+  }
+});
+
+function renderPredictResult(data) {
+  const resultBox = $("predict-result");
+  let html = `<div class="predict-headline">Prediction: ${escapeHtml(String(data.prediction))}</div>`;
+  if (data.probabilities) {
+    const max = Math.max(...Object.values(data.probabilities), 0.0001);
+    html += Object.entries(data.probabilities)
+      .sort((a, b) => b[1] - a[1])
+      .map(
+        ([label, p]) => `
+        <div class="predict-proba-row">
+          <span>${escapeHtml(label)}</span>
+          <span class="fi-track"><span class="fi-fill" style="width:${((p / max) * 100).toFixed(1)}%"></span></span>
+          <span class="mono">${(p * 100).toFixed(1)}%</span>
+        </div>`
+      )
+      .join("");
+  }
+  resultBox.innerHTML = html;
+}
 
 function renderCaveats(run) {
   const card = $("caveats-card");

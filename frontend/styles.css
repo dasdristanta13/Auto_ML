@@ -373,6 +373,41 @@ select, textarea, input[type="text"] {
 .fi-fill { background: var(--accent-primary); height: 100%; border-radius: 999px; }
 .fi-value { font-family: var(--font-mono); color: var(--text-primary); text-align: right; }
 
+/* ---------------- tabs (Report / Test the model) ---------------- */
+
+.tab-bar {
+  display: flex;
+  gap: var(--sp-4);
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: var(--sp-4);
+}
+.tab-btn {
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: var(--sp-2) 0;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.tab-btn:hover { color: var(--text-primary); }
+.tab-btn.active { color: var(--text-primary); border-bottom-color: var(--accent-primary); }
+
+/* ---------------- test-the-model playground ---------------- */
+
+.predict-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: var(--sp-3); margin-top: var(--sp-2); }
+.predict-result {
+  margin-top: var(--sp-4); padding: var(--sp-3); border-radius: var(--radius);
+  background: var(--bg-surface-raised); border-left: 3px solid var(--accent-success);
+}
+.predict-result.is-error { border-left-color: var(--accent-danger); }
+.predict-result .predict-headline { font-family: var(--font-display); font-size: var(--text-lg); margin-bottom: var(--sp-2); }
+.predict-proba-row { display: flex; justify-content: space-between; gap: var(--sp-3); font-size: var(--text-sm); padding: 4px 0; }
+.predict-proba-row .fi-track { flex: 1; margin: 0 var(--sp-2); }
+
 /* ---------------- report ---------------- */
 
 .report-lede {

@@ -256,3 +256,35 @@ def poll_training_job(run_id: str) -> dict[str, Any]:
     if run_id not in _registry:
         raise ValueError(f"unknown run_id '{run_id}'")
     return dict(_registry[run_id])
+
+
+def load_model_schema(model_path: str) -> dict[str, Any]:
+    """Feature columns the saved model expects — lets the frontend's 'test
+    the model' tab build an input form without hardcoding anything."""
+    bundle = joblib.load(model_path)
+    return {"feature_columns": bundle["feature_columns"]}
+
+
+def predict_one(model_path: str, values: dict[str, Any]) -> dict[str, Any]:
+    """Score a single user-supplied row against a saved model bundle. Missing
+    features are filled with 0, matching the fillna(0) convention used at
+    training time (see _run_job above)."""
+    bundle = joblib.load(model_path)
+    estimator = bundle["estimator"]
+    feature_columns = bundle["feature_columns"]
+    label_encoder = bundle.get("label_encoder")
+
+    row = pd.DataFrame([{col: values.get(col, 0) for col in feature_columns}])
+    raw_prediction = estimator.predict(row)[0]
+    prediction = (
+        label_encoder.inverse_transform([int(raw_prediction)])[0] if label_encoder is not None else raw_prediction
+    )
+
+    result: dict[str, Any] = {"prediction": prediction}
+    if hasattr(estimator, "predict_proba"):
+        proba = estimator.predict_proba(row)[0]
+        classes = estimator.classes_
+        if label_encoder is not None:
+            classes = label_encoder.inverse_transform(classes.astype(int))
+        result["probabilities"] = {str(c): float(p) for c, p in zip(classes, proba)}
+    return result

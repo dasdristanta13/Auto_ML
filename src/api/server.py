@@ -30,13 +30,15 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from src.export.script_export import generate_training_script
 from src.graph.build_graph import build_intake_graph, build_main_graph
 from src.llm.tracing import read_trace
 from src.state import PipelineState, new_state
+from src.training.dispatch import load_model_schema, predict_one
 
 UPLOAD_DIR = Path("data/uploads")
 
@@ -308,13 +310,70 @@ def cancel_run(run_id: str) -> dict[str, Any]:
     return {"run_id": run_id, "status": "cancelling"}
 
 
-@app.get("/api/runs/{run_id}/model")
-def download_model(run_id: str):
-    entry = _get_entry(run_id)
+def _require_model_path(entry: dict[str, Any]) -> str:
     model_path = (entry["state"].get("best_model") or {}).get("model_path")
     if not model_path or not Path(model_path).exists():
         raise HTTPException(status_code=404, detail="no trained model artifact for this run yet")
+    return model_path
+
+
+@app.get("/api/runs/{run_id}/model")
+def download_model(run_id: str):
+    entry = _get_entry(run_id)
+    model_path = _require_model_path(entry)
     return FileResponse(model_path, filename=f"automl_{run_id}.joblib", media_type="application/octet-stream")
+
+
+@app.get("/api/runs/{run_id}/script")
+def download_script(run_id: str) -> Response:
+    """Standalone Python script reproducing this run's feature engineering +
+    training (PRODUCT.md 3.4 'export pipeline as code'; PRD 2.3 step 6)."""
+    entry = _get_entry(run_id)
+    if not entry["state"].get("best_model"):
+        raise HTTPException(status_code=404, detail="no winning model to export a script for yet")
+    script = generate_training_script(entry["state"])
+    return Response(
+        content=script,
+        media_type="text/x-python",
+        headers={"Content-Disposition": f'attachment; filename="automl_{run_id}_train.py"'},
+    )
+
+
+@app.get("/api/runs/{run_id}/model/schema")
+def get_model_schema(run_id: str) -> dict[str, Any]:
+    """Feature columns + task info the frontend's 'test the model' tab needs
+    to build an input form without hardcoding anything."""
+    entry = _get_entry(run_id)
+    model_path = _require_model_path(entry)
+    schema = load_model_schema(model_path)
+    task_spec = entry["state"].get("task_spec", {}) or {}
+    best_model = entry["state"].get("best_model", {}) or {}
+    return _json_safe(
+        {
+            "feature_columns": schema["feature_columns"],
+            "task_type": task_spec.get("task_type"),
+            "target_column": task_spec.get("target_column"),
+            "candidate_name": best_model.get("candidate_name"),
+        }
+    )
+
+
+class PredictRequest(BaseModel):
+    values: dict[str, float]
+
+
+@app.post("/api/runs/{run_id}/predict")
+def predict(run_id: str, body: PredictRequest) -> dict[str, Any]:
+    """Score one user-supplied row against the winning model — the
+    'ready-made deployment to test the model' PRODUCT.md 3.4/3.5 gestures at,
+    scoped to local interactive testing rather than a hosted endpoint."""
+    entry = _get_entry(run_id)
+    model_path = _require_model_path(entry)
+    try:
+        result = predict_one(model_path, body.values)
+    except Exception as exc:  # noqa: BLE001 - surfaced as a clear 400, not a 500 stack trace
+        raise HTTPException(status_code=400, detail=f"could not score this input: {exc}") from exc
+    return _json_safe(result)
 
 
 @app.get("/api/runs/{run_id}/trace")
