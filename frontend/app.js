@@ -24,6 +24,7 @@ const ICONS = {
   clock: SVG('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>'),
   sparkle: '<svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9Z"/></svg>',
   shield: SVG('<path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10Z"/>'),
+  bulb: SVG('<path d="M9 18h6M10 22h4M12 2a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 2Z"/>'),
 };
 
 const STAGES = [
@@ -277,6 +278,7 @@ function render(run) {
   renderConfirm(run);
   renderLeakage(run);
   renderDatasetSummary(run);
+  renderInsights(run);
   renderResults(run);
   renderFeatureImportance(run);
   renderActivity(run);
@@ -324,6 +326,14 @@ function renderStatCards(run) {
       sub: "fully trace-logged",
     },
   ];
+  const insights = run.insights || [];
+  if (insights.length) {
+    cards.push({
+      icon: "bulb", tint: "violet", label: "Auto insights",
+      value: String(insights.length),
+      sub: "generated from your data",
+    });
+  }
   if (summary.pii_columns_detected) {
     cards.push({
       icon: "shield", tint: "amber", label: "PII columns",
@@ -479,13 +489,20 @@ function fillMetrics(preselect) {
 }
 $("tasktype-select").addEventListener("change", () => fillMetrics());
 
+$("cv-enabled-input").addEventListener("change", (e) => {
+  $("cv-folds-input").disabled = !e.target.checked;
+});
+
 $("confirm-form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const cvEnabled = $("cv-enabled-input").checked;
   const body = {
     target_column: $("target-select").value,
     task_type: $("tasktype-select").value,
     metric: $("metric-select").value,
     constraints: [],
+    cv_enabled: cvEnabled,
+    cv_folds: cvEnabled ? Math.max(2, Math.min(10, Number($("cv-folds-input").value) || 5)) : 0,
   };
   const res = await fetch(`/api/runs/${currentRunId}/confirm`, {
     method: "POST",
@@ -591,20 +608,40 @@ function renderResults(run) {
   const metric = (run.task_spec || {}).metric;
   $("results-sub").textContent = metric ? `ranked by ${metric}` : "";
 
+  const cvConfig = run.cv_config || {};
+  const cvChip = $("cv-config-chip");
+  if (cvConfig.enabled) {
+    cvChip.className = "chip detected cv-config-chip";
+    cvChip.innerHTML = `${ICONS.check}${cvConfig.requested_folds}-fold cross-validation requested`;
+  } else {
+    cvChip.className = "chip cv-config-chip";
+    cvChip.innerHTML = `Cross-validation disabled for this run`;
+  }
+
   const metricNames = [...new Set(results.flatMap((r) => Object.keys(r.metrics || {})))];
   const bestId = (run.best_model || {}).run_id;
   const zebra = results.length > 15;
+  const hasCv = metric && results.some((r) => r.cv_metrics && metric in r.cv_metrics);
 
-  let html = `<tr><th>Candidate</th><th>Status</th>${metricNames.map((m) => `<th>${m}</th>`).join("")}</tr>`;
+  let html = `<tr><th>Candidate</th><th>Status</th>${metricNames.map((m) => `<th>${m}</th>`).join("")}${hasCv ? `<th>CV ${escapeHtml(metric)}</th>` : ""}</tr>`;
   for (const r of results) {
     const isBest = r.run_id === bestId;
     html += `<tr class="${isBest ? "best" : ""} ${zebra ? "zebra" : ""}">
       <td>${escapeHtml(r.candidate_name)}${isBest ? '<span class="winner-tag">★ BEST</span>' : ""}</td>
       <td>${r.status}${r.error ? errorDisclosure(r.error) : ""}</td>
       ${metricNames.map((m) => `<td class="num">${r.metrics && m in r.metrics ? Number(r.metrics[m]).toFixed(4) : "—"}</td>`).join("")}
+      ${hasCv ? `<td class="num">${cvCell(r, metric)}</td>` : ""}
     </tr>`;
   }
   $("results-table").innerHTML = html;
+}
+
+function cvCell(result, metric) {
+  const cv = result.cv_metrics && result.cv_metrics[metric];
+  if (!cv) {
+    return result.cv_note ? `<span class="muted small" title="${escapeHtml(result.cv_note)}">n/a</span>` : "—";
+  }
+  return `<span title="${result.cv_folds}-fold cross-validation">${cv.mean.toFixed(4)} ± ${cv.std.toFixed(3)}</span>`;
 }
 
 /* ================= feature importance ================= */
@@ -640,6 +677,23 @@ function renderActivity(run) {
     .map(
       (e) => `<li>${ICONS.check}<span>${escapeHtml(e.message)}</span>
         ${e.timestamp ? `<span class="activity-time">${relativeTime(e.timestamp)}</span>` : ""}</li>`
+    )
+    .join("");
+}
+
+/* ================= auto insights ================= */
+
+const INSIGHT_ICON = { info: "sparkle", success: "check", warning: "warning", danger: "error" };
+
+function renderInsights(run) {
+  const insights = run.insights || [];
+  const card = $("insights-card");
+  if (!insights.length) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+  $("insights-sub").textContent = `${insights.length} suggested based on your data and goal`;
+  $("insights-list").innerHTML = insights
+    .map(
+      (i) => `<li class="insight-${i.tone}">${ICONS[INSIGHT_ICON[i.tone]] || ICONS.sparkle}<span>${escapeHtml(i.message)}</span></li>`
     )
     .join("");
 }

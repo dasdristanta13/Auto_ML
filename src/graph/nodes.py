@@ -162,6 +162,8 @@ def apply_feature_plan_node(state: PipelineState) -> PipelineState:
 
 def dispatch_training_node(state: PipelineState) -> PipelineState:
     task_spec = state.get("task_spec", {})
+    cv_enabled = state.get("cv_enabled", True)
+    cv_folds = state.get("cv_folds", 5)
     run_ids = []
     for candidate in state.get("candidate_models", []):
         run_id = train_model.invoke(
@@ -173,6 +175,8 @@ def dispatch_training_node(state: PipelineState) -> PipelineState:
                 "dataset_path": state["transformed_dataset_path"],
                 "target_column": task_spec["target_column"],
                 "task_type": task_spec["task_type"],
+                "cv_enabled": cv_enabled,
+                "cv_folds": cv_folds,
             }
         )
         run_ids.append(run_id)

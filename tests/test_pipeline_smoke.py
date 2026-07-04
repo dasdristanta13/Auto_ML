@@ -75,7 +75,18 @@ def test_full_pipeline_completes_end_to_end(tmp_path, monkeypatch):
 
     assert final_state["status"] == "completed"
     assert final_state["feature_plan_valid"] is True
-    assert len(final_state["training_results"]) == 1
-    assert final_state["training_results"][0]["status"] == "succeeded"
+    # model_selection_node fills in every applicable classification family
+    # alongside the LLM's single proposed candidate (CLAUDE.md rule #2:
+    # completeness is a deterministic floor, not left to the LLM's judgment).
+    candidate_names = {c["name"] for c in final_state["candidate_models"]}
+    assert candidate_names == {
+        "baseline_rf",
+        "Logistic Regression",
+        "Gradient Boosting",
+        "XGBoost",
+        "LightGBM",
+    }
+    assert len(final_state["training_results"]) == 5
+    assert all(r["status"] == "succeeded" for r in final_state["training_results"])
     assert "f1" in final_state["best_model"]["metrics"]
     assert final_state["report"]["narrative"] == "This is a test report."
