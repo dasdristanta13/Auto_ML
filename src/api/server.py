@@ -36,6 +36,7 @@ from pydantic import BaseModel
 
 from src.export.script_export import generate_training_script
 from src.graph.build_graph import build_intake_graph, build_main_graph
+from src.insights.auto_insights import generate_insights
 from src.llm.tracing import read_trace
 from src.state import PipelineState, new_state
 from src.training.dispatch import load_model_schema, predict_one
@@ -239,6 +240,7 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
             "feature_plan": state.get("feature_plan"),
             "training_results": state.get("training_results", []),
             "best_model": state.get("best_model"),
+            "insights": generate_insights(state, stages_done),
             "report": state.get("report", {}).get("narrative"),
             "errors": state.get("errors", []),
         }

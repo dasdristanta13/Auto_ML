@@ -62,6 +62,11 @@ class FeatureImportance(BaseModel):
     importance: float
 
 
+class CVMetric(BaseModel):
+    mean: float
+    std: float
+
+
 class TrainingResult(BaseModel):
     run_id: str
     candidate_name: str
@@ -71,6 +76,9 @@ class TrainingResult(BaseModel):
     error: Optional[str] = None
     model_path: Optional[str] = None
     feature_importance: list[FeatureImportance] = Field(default_factory=list)
+    cv_folds: int = 0
+    cv_metrics: dict[str, CVMetric] = Field(default_factory=dict)
+    cv_note: Optional[str] = None
 
 
 class PipelineState(TypedDict, total=False):

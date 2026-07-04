@@ -411,6 +411,14 @@ select, textarea, input[type="text"], input[type="number"] {
 .callout-list li { display: flex; gap: var(--sp-2); align-items: flex-start; }
 .callout-list .icon { margin-top: 3px; flex-shrink: 0; }
 
+/* auto-insights: tone follows the same status colors used everywhere else,
+   always paired with an icon — never color-alone (DESIGN.md 5.1) */
+.insight-list li { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg-surface-raised); }
+.insight-info .icon { color: var(--accent-primary); }
+.insight-success .icon { color: var(--accent-success); }
+.insight-warning .icon { color: var(--accent-warning); }
+.insight-danger .icon { color: var(--accent-danger); }
+
 /* ================= dashboard grid ================= */
 
 .dash-grid {

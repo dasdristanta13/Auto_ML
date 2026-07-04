@@ -21,6 +21,7 @@ training:
   poll_interval_seconds: 2
   poll_max_attempts: 150 # ~5 min wall clock at 2s interval before giving up
   hyperparam_search_budget_seconds: 120
+  cv_folds: 5 # k-fold cross-validation on the training split; auto-reduced for small/imbalanced data
 
 budgets:
   max_llm_calls_per_run: 40
