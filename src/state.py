@@ -57,6 +57,11 @@ class CandidateModel(BaseModel):
     rationale: str = ""
 
 
+class FeatureImportance(BaseModel):
+    feature: str
+    importance: float
+
+
 class TrainingResult(BaseModel):
     run_id: str
     candidate_name: str
@@ -65,6 +70,7 @@ class TrainingResult(BaseModel):
     duration_seconds: Optional[float] = None
     error: Optional[str] = None
     model_path: Optional[str] = None
+    feature_importance: list[FeatureImportance] = Field(default_factory=list)
 
 
 class PipelineState(TypedDict, total=False):

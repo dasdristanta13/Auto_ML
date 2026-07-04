@@ -75,13 +75,20 @@ def _stream_graph(run_id: str, graph, on_done_status) -> None:
                     if isinstance(update, dict):
                         entry["state"].update(update)
                     _record_event(entry, node_name)
+            with _lock:
+                if entry.get("cancel_requested"):
+                    entry["status"] = "cancelled"
+                    entry["finished_at"] = time.time()
+                    return
     except Exception as exc:  # noqa: BLE001 - a failed run must end in a clear user-facing state, never a hang
         with _lock:
             entry["state"].setdefault("errors", []).append(str(exc))
             entry["status"] = "failed"
+            entry["finished_at"] = time.time()
         return
     with _lock:
         entry["status"] = on_done_status(entry["state"])
+        entry["finished_at"] = time.time()
 
 
 def _run_intake(run_id: str) -> None:
@@ -124,12 +131,57 @@ def _profile_columns(state: PipelineState) -> list[dict[str, Any]]:
     ]
 
 
+_STAGE_MESSAGES = {
+    "profile": "Profiled the dataset — schema, null rates, cardinality, and PII scan complete.",
+    "understand_usecase": "Interpreted the use case into a task specification.",
+    "leakage_check": "Checked for columns that may leak information about the target.",
+    "feature_engineering": "Planned feature transformations (imputation, encoding, scaling).",
+    "apply_feature_plan": "Applied the feature plan to the dataset.",
+    "model_selection": "Selected candidate models suited to this task and data.",
+    "dispatch_training": "Dispatched training jobs for each candidate model.",
+    "poll_training": "Training in progress.",
+    "evaluate": "Evaluated all candidates and selected the best model.",
+    "report": "Wrote the final report.",
+}
+
+
+def _plain_language_events(state: PipelineState, stages_done: list[str]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for stage in stages_done:
+        message = _STAGE_MESSAGES.get(stage, stage)
+        if stage == "profile":
+            profile = state.get("profile", {})
+            pii_n = profile.get("pii_report", {}).get("pii_columns_detected", 0)
+            if pii_n:
+                message += f" Redacted {pii_n} PII column(s) before any AI-facing step."
+        elif stage == "leakage_check":
+            flags = state.get("leakage_flags", [])
+            message = (
+                f"Flagged {len(flags)} possible target-leakage column(s) — heuristic, not guaranteed complete."
+                if flags
+                else "No target-leakage signals detected (heuristic — not guaranteed complete)."
+            )
+        elif stage == "dispatch_training":
+            n = len(state.get("candidate_models", []))
+            message = f"Dispatched {n} training job(s) — running asynchronously."
+        elif stage == "evaluate":
+            best = state.get("best_model", {})
+            if best.get("candidate_name"):
+                message = f"'{best['candidate_name']}' selected as the best model."
+        events.append({"stage": stage, "message": message})
+    return events
+
+
 def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
     state = entry["state"]
     stages_done: list[str] = []
     for event in entry["events"]:
         if event["node"] not in stages_done:
             stages_done.append(event["node"])
+
+    retry_count = state.get("retry_count", {})
+    end_time = entry.get("finished_at") or time.time()
+
     return _json_safe(
         {
             "run_id": run_id,
@@ -137,7 +189,11 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
             "description": state.get("use_case_description"),
             "status": entry["status"],
             "created_at": entry["created_at"],
+            "elapsed_seconds": round(end_time - entry["created_at"], 1),
+            "llm_call_count": len(read_trace(run_id)),
             "stages_done": stages_done,
+            "events": _plain_language_events(state, stages_done),
+            "retry_count": retry_count,
             "task_spec": state.get("task_spec"),
             "profile_summary": {
                 "row_count": state.get("profile", {}).get("row_count"),
@@ -175,6 +231,8 @@ async def create_run(file: UploadFile = File(...), description: str = Form(...))
             "events": [],
             "filename": file.filename,
             "created_at": time.time(),
+            "finished_at": None,
+            "cancel_requested": False,
         }
 
     threading.Thread(target=_run_intake, args=(run_id,), daemon=True).start()
@@ -231,6 +289,23 @@ def confirm_run(run_id: str, body: ConfirmRequest) -> dict[str, Any]:
 
     threading.Thread(target=_run_main, args=(run_id,), daemon=True).start()
     return {"run_id": run_id, "status": "running"}
+
+
+@app.post("/api/runs/{run_id}/cancel")
+def cancel_run(run_id: str) -> dict[str, Any]:
+    """Best-effort cancellation (PRODUCT.md 3.3: 'always show a way to cancel
+    a running pipeline'). Takes effect between graph steps — an in-flight
+    node/training job already running is not interrupted mid-execution, but
+    no further stages will start."""
+    entry = _get_entry(run_id)
+    with _lock:
+        if entry["status"] not in ("profiling", "running", "awaiting_confirmation"):
+            raise HTTPException(status_code=409, detail=f"run is '{entry['status']}', nothing to cancel")
+        entry["cancel_requested"] = True
+        if entry["status"] == "awaiting_confirmation":
+            entry["status"] = "cancelled"
+            entry["finished_at"] = time.time()
+    return {"run_id": run_id, "status": "cancelling"}
 
 
 @app.get("/api/runs/{run_id}/model")
