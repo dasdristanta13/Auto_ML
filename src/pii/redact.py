@@ -56,6 +56,18 @@ def _name_hint(column: str) -> str | None:
     return None
 
 
+def _mostly_dates(sample: pd.Series) -> bool:
+    """Digit-and-hyphen date strings ("2022-01-01") satisfy the loose phone
+    pattern; a column that overwhelmingly parses as datetimes is a date
+    column, not a phone list."""
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # "could not infer format" chatter on mixed strings
+        parsed = pd.to_datetime(sample, errors="coerce")
+    return bool(parsed.notna().mean() > 0.8)
+
+
 def _pattern_hint(series: pd.Series, sample_size: int = 200) -> str | None:
     non_null = series.dropna().astype(str)
     if non_null.empty:
@@ -64,6 +76,8 @@ def _pattern_hint(series: pd.Series, sample_size: int = 200) -> str | None:
     for pii_type, pattern in _VALUE_PATTERNS.items():
         matches = sample.str.match(pattern)
         if matches.mean() > 0.8:
+            if pii_type == "phone_number" and _mostly_dates(sample):
+                continue
             return pii_type
     return None
 

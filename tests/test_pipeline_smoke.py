@@ -5,6 +5,8 @@ async training dispatch all work together locally."""
 
 from __future__ import annotations
 
+import importlib.util
+
 import numpy as np
 import pandas as pd
 
@@ -54,6 +56,8 @@ def _fake_generate(self, run_id, node, system_prompt, user_prompt, json_schema=N
 
 def test_full_pipeline_completes_end_to_end(tmp_path, monkeypatch):
     monkeypatch.setattr(LLMClient, "generate", _fake_generate)
+    # the CLI's feature_approval_checkpoint_node otherwise blocks on stdin input()
+    monkeypatch.setenv("AUTOML_AUTO_APPROVE_FEATURES", "1")
 
     rng = np.random.default_rng(0)
     n = 300
@@ -69,6 +73,9 @@ def test_full_pipeline_completes_end_to_end(tmp_path, monkeypatch):
     df.to_csv(dataset_path, index=False)
 
     state = new_state(run_id="smoke-test", dataset_path=str(dataset_path), use_case_description="predict which customers will churn")
+    # keep the smoke test fast: Optuna tuning has its own dedicated tests
+    # (tests/test_tuning.py); here it would multiply training time ~15x
+    state["tuning_enabled"] = False
 
     graph = build_graph()
     final_state = graph.invoke(state, config={"recursion_limit": 100})
@@ -78,15 +85,15 @@ def test_full_pipeline_completes_end_to_end(tmp_path, monkeypatch):
     # model_selection_node fills in every applicable classification family
     # alongside the LLM's single proposed candidate (CLAUDE.md rule #2:
     # completeness is a deterministic floor, not left to the LLM's judgment).
+    # xgboost/lightgbm are optional installs, so expect them only if importable.
+    expected = {"baseline_rf", "Logistic Regression", "Gradient Boosting"}
+    if importlib.util.find_spec("xgboost"):
+        expected.add("XGBoost")
+    if importlib.util.find_spec("lightgbm"):
+        expected.add("LightGBM")
     candidate_names = {c["name"] for c in final_state["candidate_models"]}
-    assert candidate_names == {
-        "baseline_rf",
-        "Logistic Regression",
-        "Gradient Boosting",
-        "XGBoost",
-        "LightGBM",
-    }
-    assert len(final_state["training_results"]) == 5
+    assert candidate_names == expected
+    assert len(final_state["training_results"]) == len(expected)
     assert all(r["status"] == "succeeded" for r in final_state["training_results"])
     assert "f1" in final_state["best_model"]["metrics"]
     assert final_state["report"]["narrative"] == "This is a test report."

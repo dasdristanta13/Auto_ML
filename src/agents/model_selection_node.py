@@ -3,6 +3,7 @@ type and the dataset's actual characteristics (PRD FR-18)."""
 
 from __future__ import annotations
 
+import importlib.util
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field, ValidationError
@@ -40,12 +41,23 @@ _CANONICAL_ESTIMATORS: dict[str, list[tuple[str, str, str, dict[str, Any]]]] = {
 }
 
 
+_LIBRARY_IMPORT_NAMES = {"sklearn": "sklearn", "xgboost": "xgboost", "lightgbm": "lightgbm"}
+
+
+def _library_available(library: str) -> bool:
+    """xgboost/lightgbm are optional installs (requirements.txt) — the
+    completeness floor must not inject a candidate that would fail on import
+    and burn a training slot every run."""
+    module = _LIBRARY_IMPORT_NAMES.get(library)
+    return module is not None and importlib.util.find_spec(module) is not None
+
+
 def _fill_missing_candidates(candidates: list[CandidateModel], task_type: Optional[str]) -> list[CandidateModel]:
     canonical = _CANONICAL_ESTIMATORS.get(task_type or "", [])
     present = {(c.library, c.estimator) for c in candidates}
     filled = list(candidates)
     for name, library, estimator, hyperparams in canonical:
-        if (library, estimator) not in present:
+        if (library, estimator) not in present and _library_available(library):
             filled.append(
                 CandidateModel(
                     name=name,

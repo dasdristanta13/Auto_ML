@@ -126,6 +126,23 @@ def profile_dataset(df: pd.DataFrame) -> dict[str, Any]:
         profile["columns"] = _column_level_profile(
             df[non_numeric_cols], redacted[non_numeric_cols], pii_report["columns"]
         )
+        # every numeric column still gets a basic entry (no numeric_summary —
+        # that's the cluster summary's job): the confirm endpoint validates
+        # the target against profile["columns"] and the UI builds its target
+        # picker from it, so omitting these made numeric targets unselectable.
+        # Low-cardinality columns (plausible classification targets) also get
+        # top_values so imbalance detection (minority_ratio) keeps working.
+        for col in numeric_cols:
+            entry: dict[str, Any] = {
+                "dtype": str(df[col].dtype),
+                "null_rate": float(df[col].isna().mean()),
+                "n_unique": int(df[col].nunique(dropna=True)),
+                "is_pii": False,
+            }
+            if entry["n_unique"] <= MAX_TOP_CATEGORIES:
+                counts = df[col].value_counts().head(MAX_TOP_CATEGORIES)
+                entry["top_values"] = {str(k): int(v) for k, v in counts.items()}
+            profile["columns"][col] = entry
     else:
         profile["columns"] = _column_level_profile(df, redacted, pii_report["columns"])
         numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and c not in pii_report["columns"]]

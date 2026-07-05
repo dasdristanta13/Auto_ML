@@ -17,30 +17,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.profiling.heuristics import IMBALANCE_THRESHOLD, looks_like_identifier, minority_ratio
+
 _HIGH_NULL_RATE = 0.30
-_IMBALANCE_THRESHOLD = 0.15
 _MIN_ROWS_FOR_CARDINALITY_CHECK = 20
-_ID_NAME_HINTS = ("id", "uuid", "guid", "key", "index")
 
 
 def _insight(insight_id: str, category: str, tone: str, message: str) -> dict[str, Any]:
     return {"id": insight_id, "category": category, "tone": tone, "message": message}
 
 
-def _looks_like_identifier(name: str, dtype: str, n_unique: int, row_count: int) -> bool:
-    """Continuous numeric columns (floats: amounts, measurements) are
-    naturally near-unique — that's not suspicious. Only flag integer/object
-    columns, and only at a ratio strict enough that it's very unlikely to be
-    a legitimate high-cardinality feature rather than an identifier."""
-    if "float" in dtype.lower():
-        return False
-    ratio = n_unique / row_count
-    if any(hint in name.lower() for hint in _ID_NAME_HINTS):
-        return ratio > 0.5
-    return ratio > 0.98
-
-
-def _profile_insights(profile: dict[str, Any], task_spec: dict[str, Any]) -> list[dict[str, Any]]:
+def profile_insights(profile: dict[str, Any], task_spec: dict[str, Any]) -> list[dict[str, Any]]:
     insights: list[dict[str, Any]] = []
     row_count = profile.get("row_count", 0)
     columns = profile.get("columns", {})
@@ -75,7 +62,7 @@ def _profile_insights(profile: dict[str, Any], task_spec: dict[str, Any]) -> lis
             not info.get("is_pii")
             and name != task_spec.get("target_column")
             and row_count > _MIN_ROWS_FOR_CARDINALITY_CHECK
-            and _looks_like_identifier(name, info.get("dtype", ""), n_unique, row_count)
+            and looks_like_identifier(name, info.get("dtype", ""), n_unique, row_count)
         ):
             identifier_col = name
 
@@ -112,19 +99,9 @@ def _profile_insights(profile: dict[str, Any], task_spec: dict[str, Any]) -> lis
     if task_spec.get("task_type") == "classification":
         target = task_spec.get("target_column")
         target_info = columns.get(target) if target else None
-        positive_rate = None
-        if target_info and "top_values" in target_info and isinstance(target_info["top_values"], dict):
-            counts = target_info["top_values"]
-            total = sum(counts.values())
-            if total:
-                positive_rate = min(counts.values()) / total
-        elif target_info and "numeric_summary" in target_info:
-            # a 0/1-encoded binary target's mean IS its positive rate
-            mean = target_info["numeric_summary"].get("mean")
-            if mean is not None and 0 <= mean <= 1:
-                positive_rate = min(mean, 1 - mean)
+        positive_rate = minority_ratio(target_info)
 
-        if positive_rate is not None and positive_rate < _IMBALANCE_THRESHOLD:
+        if positive_rate is not None and positive_rate < IMBALANCE_THRESHOLD:
             insights.append(
                 _insight(
                     "class_imbalance", "imbalance", "warning",
@@ -227,7 +204,7 @@ def generate_insights(state: dict[str, Any], stages_done: list[str]) -> list[dic
         return []
 
     task_spec = state.get("task_spec") or {}
-    insights = _profile_insights(profile, task_spec)
+    insights = profile_insights(profile, task_spec)
     insights += _leakage_insights(state.get("leakage_flags") or [])
     insights += _model_insights(task_spec, state.get("training_results") or [], state.get("best_model") or {})
 

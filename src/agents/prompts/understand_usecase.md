@@ -12,6 +12,12 @@ Your job is to infer a structured task specification:
   "rmse", "precision", "recall") — only set this if it can be reasonably
   inferred; business goals like "reduce churn" do not map cleanly to one
   metric without more context.
+- time_column: if the data is time-ordered (forecasting, or rows that occur
+  in sequence such as daily records), the name of the timestamp/date column
+  the rows should be ordered by — training will use a chronological
+  train/test split on it to avoid look-ahead leakage. null when the rows have
+  no meaningful time ordering. Do NOT mark this ambiguous just because it is
+  null — most tabular datasets have no time column.
 - constraints: any explicit constraints mentioned (e.g. "must be interpretable",
   "optimize for recall")
 

@@ -16,7 +16,21 @@ from pydantic import ValidationError
 from src.agents.prompt_utils import render_prompt
 from src.llm.client import get_llm_client
 from src.sandbox.validate import validate_code
-from src.state import FeaturePlan, PipelineState
+from src.state import FeaturePlan, FeatureStep, PipelineState
+
+
+def _fill_missing_feature_steps(steps: list[FeatureStep], suggested_steps: list[dict]) -> list[FeatureStep]:
+    """Deterministic completeness floor (same shape as
+    model_selection_node._fill_missing_candidates): the LLM's plan is the
+    primary source, but any column the EDA flagged that the LLM's plan didn't
+    touch at all still gets its EDA-suggested step applied, tagged
+    source="eda" so the approval UI can show provenance."""
+    llm_touched_columns = {col for step in steps for col in step.columns}
+    filled = list(steps)
+    for suggestion in suggested_steps:
+        if not any(col in llm_touched_columns for col in suggestion.get("columns", [])):
+            filled.append(FeatureStep(**{**suggestion, "source": "eda"}))
+    return filled
 
 
 def _validate_plan(raw: dict) -> tuple[FeaturePlan | None, list[str]]:
@@ -40,11 +54,13 @@ def _validate_plan(raw: dict) -> tuple[FeaturePlan | None, list[str]]:
 
 def feature_engineering_node(state: PipelineState) -> PipelineState:
     client = get_llm_client()
+    eda_report = state.get("eda_report") or {}
     system_prompt = render_prompt(
         "feature_engineering.md",
         TASK_SPEC_JSON=state.get("task_spec", {}),
         LEAKAGE_FLAGS_JSON=state.get("leakage_flags", []),
         PROFILE_JSON=state.get("profile", {}),
+        EDA_JSON=eda_report,
         PRIOR_ATTEMPT_FEEDBACK=(
             f"## Your previous attempt was rejected\n{state['feature_plan_feedback']}"
             if state.get("feature_plan_feedback")
@@ -70,6 +86,13 @@ def feature_engineering_node(state: PipelineState) -> PipelineState:
         state.setdefault("errors", []).append(f"feature_engineering attempt rejected: {'; '.join(errors)}")
         state["feature_plan"] = raw
         return state
+
+    # provenance is our own bookkeeping, never the LLM's to set — force "llm"
+    # regardless of what the model emitted, then fill any EDA-flagged column
+    # the plan left untouched (mirrors model_selection_node's candidate floor).
+    llm_steps = [step.model_copy(update={"source": "llm"}) for step in plan.steps]
+    merged_steps = _fill_missing_feature_steps(llm_steps, eda_report.get("suggested_steps", []))
+    plan = plan.model_copy(update={"steps": merged_steps})
 
     state["feature_plan"] = plan.model_dump()
     state["feature_plan_valid"] = True
