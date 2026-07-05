@@ -29,11 +29,15 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+import os
+
+import yaml
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from src.auth.session import create_session, destroy_session, get_session
 from src.export.script_export import generate_training_script
 from src.graph.build_graph import build_intake_graph, build_prep_graph, build_train_graph
 from src.agents.chat_node import answer_chat_question
@@ -53,6 +57,77 @@ _lock = threading.Lock()
 _intake_graph = build_intake_graph()
 _prep_graph = build_prep_graph()
 _train_graph = build_train_graph()
+
+SESSION_COOKIE_NAME = "automl_session"
+
+
+def _auth_config() -> dict[str, Any]:
+    with open("config/runtime.yaml", "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)["auth"]
+
+
+def _get_session_from_request(request: Request) -> dict[str, Any] | None:
+    return get_session(request.cookies.get(SESSION_COOKIE_NAME))
+
+
+def require_session(request: Request) -> dict[str, Any]:
+    """FastAPI dependency: 401s any request without a valid, unexpired
+    session cookie. Applied to every /api/runs* endpoint (Task 3) — this is
+    a demo-credential gate for a single-user local tool, not production
+    multi-tenant auth (see docs/superpowers/specs/2026-07-05-login-page-design.md)."""
+    session = _get_session_from_request(request)
+    if session is None:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    return session
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/auth/login")
+def login(body: LoginRequest, response: Response) -> dict[str, Any]:
+    demo_email = os.environ.get("AUTOML_DEMO_EMAIL", "demo@automl.local")
+    demo_password = os.environ.get("AUTOML_DEMO_PASSWORD", "demo123")
+    if body.email.strip().lower() != demo_email.strip().lower() or body.password != demo_password:
+        raise HTTPException(status_code=401, detail="invalid email or password")
+
+    ttl_hours = _auth_config()["session_ttl_hours"]
+    token = create_session(demo_email, ttl_hours)
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        token,
+        max_age=int(ttl_hours * 3600),
+        httponly=True,
+        samesite="lax",
+        secure=False,  # local http dev (run_server.py); see design spec
+        path="/",
+    )
+    return {"ok": True}
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response) -> dict[str, Any]:
+    destroy_session(request.cookies.get(SESSION_COOKIE_NAME))
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return {"ok": True}
+
+
+@app.get("/api/auth/session")
+def auth_session(request: Request) -> dict[str, Any]:
+    session = _get_session_from_request(request)
+    return {"authenticated": session is not None, "email": session["email"] if session else None}
+
+
+@app.get("/api/auth/demo-credentials")
+def demo_credentials() -> dict[str, Any]:
+    """Unauthenticated by design — this is a demo credential for a
+    single-user local tool, not a secret (see design spec)."""
+    return {
+        "email": os.environ.get("AUTOML_DEMO_EMAIL", "demo@automl.local"),
+        "password": os.environ.get("AUTOML_DEMO_PASSWORD", "demo123"),
+    }
 
 
 def _json_safe(obj: Any) -> Any:
