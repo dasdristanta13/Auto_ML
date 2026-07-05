@@ -22,6 +22,13 @@ from src.profiling.heuristics import IMBALANCE_THRESHOLD, looks_like_identifier,
 _HIGH_NULL_RATE = 0.30
 _MIN_ROWS_FOR_CARDINALITY_CHECK = 20
 
+_MAX_SUGGESTED_QUESTIONS = 4
+_FALLBACK_SUGGESTED_QUESTIONS = [
+    "Is there a risk of target leakage in this model?",
+    "What are the caveats I should know about?",
+    "Why was this model chosen over the alternatives?",
+]
+
 
 def _insight(insight_id: str, category: str, tone: str, message: str) -> dict[str, Any]:
     return {"id": insight_id, "category": category, "tone": tone, "message": message}
@@ -217,3 +224,38 @@ def generate_insights(state: dict[str, Any], stages_done: list[str]) -> list[dic
             )
         )
     return insights
+
+
+def suggested_questions(
+    insights: list[dict[str, Any]], task_spec: dict[str, Any], best_model: dict[str, Any]
+) -> list[str]:
+    """Deterministic (no LLM call) prompts for the chat panel's suggestion
+    chips, derived from what's actually notable in THIS run so they're
+    relevant rather than generic. Capped at 4, deduplicated; falls back to a
+    fixed generic set when nothing stands out."""
+    questions: list[str] = []
+    categories = {i.get("category") for i in insights}
+
+    if "imbalance" in categories:
+        questions.append("Why is my data imbalanced, and what was done about it?")
+    if "leakage" in categories:
+        questions.append("Is there a risk of target leakage in this model?")
+
+    importance = best_model.get("feature_importance") or []
+    if importance:
+        questions.append(f"Why is '{importance[0]['feature']}' the strongest driver?")
+
+    metric = task_spec.get("metric")
+    if best_model.get("candidate_name") and metric:
+        questions.append(f"How can I improve {metric}?")
+
+    if not questions:
+        questions = list(_FALLBACK_SUGGESTED_QUESTIONS)
+
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for q in questions:
+        if q not in seen:
+            seen.add(q)
+            deduped.append(q)
+    return deduped[:_MAX_SUGGESTED_QUESTIONS]
