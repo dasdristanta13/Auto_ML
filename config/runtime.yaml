@@ -27,3 +27,6 @@ training:
 budgets:
   max_llm_calls_per_run: 40
   max_tokens_per_run: 200000
+
+auth:
+  session_ttl_hours: 24 # demo login session lifetime (src/auth/session.py)
