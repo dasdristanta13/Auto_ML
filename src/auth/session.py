@@ -25,7 +25,7 @@ def get_session(token: str | None) -> dict[str, Any] | None:
     if entry is None:
         return None
     if entry["expires_at"] < time.time():
-        del _sessions[token]
+        _sessions.pop(token, None)
         return None
     return entry
 

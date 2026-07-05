@@ -115,10 +115,9 @@ page loads independently of `app.js`) — no new color families.
 
 Layout, matching the reference image's chrome:
 - Top nav bar: brand mark + "AutoML Agentic" wordmark (left), inert nav links
-  "Product · Features · How it Works · Pricing · Docs · About" (center-left, styled
-  identically to the image but non-interactive — `href="#"`, since this app has no
-  marketing subpages), the light/dark toggle and a "Get Started Free" button (right)
-  that just focuses the email field (smooth-scrolls to it on narrow layouts).
+  "Product · Features · How it Works · Pricing · Docs · About" (center-left, rendered
+  as non-interactive `<span>` elements wrapped in a `div` with `aria-hidden="true"`,
+  since this app has no marketing subpages), and the light/dark theme toggle (right).
 - Background: the same soft gradient/blob treatment used behind the image's hero.
 - Centered card: "Welcome back" heading, one-line subtext, email field, password
   field, "Log in" button (primary, full-width), an inline error message region
@@ -144,7 +143,7 @@ Submit handler: `POST /api/auth/login`; on success `window.location.href = "/"`;
 
 ```
 GET /login.html          -> static, unauthenticated, always reachable
-GET /                     -> 200 index.html (session valid) | 302 /login.html (no session)
+GET /                     -> 200 index.html (session valid) | 307 /login.html (no session)
 POST /api/auth/login      -> sets automl_session cookie -> frontend redirects to /
 GET  /api/auth/session    -> {authenticated, email} -> used by app.js's load-time guard
 POST /api/auth/logout     -> clears cookie -> frontend redirects to /login.html
