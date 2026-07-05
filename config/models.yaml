@@ -36,3 +36,9 @@ nodes:
     model: gpt-5-nano
     temperature: 0.2
     max_tokens: 4096
+
+  chat:
+    provider: openai
+    model: gpt-5-nano
+    temperature: 0.2
+    max_tokens: 1024

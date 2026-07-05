@@ -67,12 +67,22 @@
       </div>
     </header>
 
-    <!-- ============ intake ============ -->
-    <main class="content" id="intake-view">
+    <!-- ============ home / intake ============ -->
+    <main class="content home-content" id="intake-view">
+      <section class="home-hero">
+        <div class="hero-eyebrow" aria-hidden="true">
+          <span>AI-Powered</span><span class="hero-eyebrow-dot"></span>
+          <span>Agentic</span><span class="hero-eyebrow-dot"></span>
+          <span>Automated</span>
+        </div>
+        <h2 class="hero-title">Build Better Models.<br /><span class="hero-accent">Automatically.</span></h2>
+        <p class="hero-sub">Describe your goal in plain language and attach a dataset. LLM agents plan and run the full pipeline, from profiling and feature engineering to training and evaluation, and explain every decision. Nothing runs until you've confirmed what they understood.</p>
+      </section>
+
       <section class="card intake-card">
         <div class="intake-hero">
           <h2>What do you want to predict or solve?</h2>
-          <p class="muted">Describe your goal in plain language, then attach the dataset. Nothing runs until you've confirmed what we understood.</p>
+          <p class="muted">Nothing runs until you've confirmed what we understood.</p>
         </div>
         <form id="new-run-form">
           <label class="usecase-field field">
@@ -90,6 +100,58 @@
           </div>
         </form>
       </section>
+
+      <div class="trust-row" role="list">
+        <span class="trust-chip" role="listitem"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></svg>No coding required</span>
+        <span class="trust-chip" role="listitem"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg>Runs locally</span>
+        <span class="trust-chip" role="listitem"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10Z"/></svg>Raw data never reaches the LLM</span>
+        <span class="trust-chip" role="listitem"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z"/><path d="M14 2v6h6"/></svg>Full audit trace</span>
+      </div>
+
+      <section class="home-stats hidden" id="home-stats"></section>
+
+      <section class="home-band hidden" id="home-band">
+        <div class="card home-projects">
+          <div class="card-head"><h3>Recent Projects</h3></div>
+          <div class="home-projects-list" id="home-projects-list"></div>
+        </div>
+        <div class="card home-pipeline hidden" id="home-pipeline">
+          <div class="card-head"><h3>Pipeline in Progress</h3><span class="muted small" id="home-pipeline-sub"></span></div>
+          <ol class="mini-rail" id="home-pipeline-rail"></ol>
+        </div>
+      </section>
+
+      <section class="home-features">
+        <h2 class="home-features-title">An End-to-End AutoML Pipeline</h2>
+        <p class="muted home-features-sub">From data understanding to a downloadable model: automated, explained, and checkpointed by you.</p>
+        <div class="feature-grid">
+          <div class="feature-card">
+            <span class="feature-icon violet"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span>
+            <h3>Smart Data Understanding</h3>
+            <p>Deterministic profiling, PII redaction, and leakage checks before any AI-facing step. Raw rows never reach the LLM.</p>
+          </div>
+          <div class="feature-card">
+            <span class="feature-icon green"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7m0-4V3m8 18v-9m0-4V3m8 18v-5m0-4V3M1 14h6M9 8h6m2 8h6"/></svg></span>
+            <h3>Intelligent Feature Engineering</h3>
+            <p>EDA-grounded transformation plans (imputation, encoding, scaling) that you review and approve before they run.</p>
+          </div>
+          <div class="feature-card">
+            <span class="feature-icon blue"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg></span>
+            <h3>Model Selection &amp; Tuning</h3>
+            <p>Candidate models suited to your task, k-fold cross-validation, and Optuna hyperparameter search per candidate.</p>
+          </div>
+          <div class="feature-card">
+            <span class="feature-icon amber"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6M10 22h4M12 2a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 2Z"/></svg></span>
+            <h3>Explainable Insights</h3>
+            <p>Feature importance, auto insights, plain-language reports, and explicit caveats for every run.</p>
+          </div>
+          <div class="feature-card">
+            <span class="feature-icon violet"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-3.9 3.1-7 7-7 1.4 0 2.7.4 3.8 1.1"/><path d="m15 18 2 2 4-4"/></svg></span>
+            <h3>Human Checkpoints</h3>
+            <p>The pipeline pauses for your confirmation of the task spec and your approval of the feature plan — you stay in control.</p>
+          </div>
+        </div>
+      </section>
     </main>
 
     <!-- ============ run dashboard ============ -->
@@ -97,6 +159,9 @@
 
       <!-- stat cards -->
       <section class="stat-row" id="stat-cards"></section>
+
+      <div class="run-layout">
+      <div class="run-main">
 
       <!-- live pipeline -->
       <section class="card">
@@ -234,6 +299,24 @@
           <div class="chips" id="dataset-chips"></div>
         </div>
 
+        <div class="card hidden" id="classdist-card">
+          <div class="card-head"><h3>Class distribution</h3><span class="muted small" id="classdist-sub"></span></div>
+          <div class="donut-wrap">
+            <svg id="classdist-donut" viewBox="0 0 120 120" role="img" aria-label="Target class distribution"></svg>
+            <div class="donut-center" id="classdist-center"></div>
+            <ul class="donut-legend" id="classdist-legend"></ul>
+          </div>
+          <div class="chips" id="classdist-chips"></div>
+        </div>
+
+        <div class="card hidden" id="quality-card">
+          <div class="card-head"><h3>Data quality overview</h3><span class="muted small" id="quality-sub"></span></div>
+          <div class="quality-wrap">
+            <div class="quality-ring" id="quality-ring"></div>
+            <div class="quality-bars" id="quality-bars"></div>
+          </div>
+        </div>
+
         <div class="card hidden" id="results-card">
           <div class="card-head">
             <h3>Model comparison</h3>
@@ -260,10 +343,6 @@
           <div class="fi-list" id="fi-list"></div>
         </div>
 
-        <div class="card hidden" id="activity-card">
-          <div class="card-head"><h3>Recent activity</h3></div>
-          <ul class="activity-list" id="activity-list"></ul>
-        </div>
       </section>
 
       <!-- report + try-the-model, tabbed -->
@@ -311,6 +390,32 @@
         <h3>Issues encountered</h3>
         <ul class="callout-list" id="error-list"></ul>
       </div>
+
+      </div><!-- /run-main -->
+
+      <aside class="run-rail">
+        <div class="card assistant-card" id="assistant-card">
+          <div class="card-head">
+            <h3><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9Z"/></svg> AI Assistant</h3>
+          </div>
+          <p class="muted small" id="chat-placeholder">Available once your model is trained.</p>
+          <div class="chat-thread hidden" id="chat-thread"></div>
+          <div class="chat-suggestions hidden" id="chat-suggestions"></div>
+          <form id="chat-form" class="chat-form hidden">
+            <input type="text" id="chat-input" placeholder="Ask about this run…" autocomplete="off" />
+            <button type="submit" class="btn primary" id="chat-send-btn" aria-label="Send question">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-11 11"/><path d="M22 2 15 22l-4-9-9-4 20-7Z"/></svg>
+            </button>
+          </form>
+          <p class="chat-error hidden" id="chat-error" role="alert"></p>
+        </div>
+
+        <div class="card hidden" id="activity-card">
+          <div class="card-head"><h3>Recent activity</h3></div>
+          <ul class="activity-list" id="activity-list"></ul>
+        </div>
+      </aside>
+      </div><!-- /run-layout -->
     </main>
   </div>
 </div>

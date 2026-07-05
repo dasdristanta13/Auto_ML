@@ -65,6 +65,28 @@ def _get_executor() -> ThreadPoolExecutor:
     return _executor
 
 
+_TREE_ENSEMBLE_ESTIMATORS = {
+    "RandomForestClassifier",
+    "RandomForestRegressor",
+    "GradientBoostingClassifier",
+    "GradientBoostingRegressor",
+}
+
+
+def _sanitize_hyperparams(estimator: str, hyperparams: dict[str, Any]) -> dict[str, Any]:
+    """LLM-proposed hyperparams are structured JSON (CLAUDE.md rule #2) but
+    aren't validated against the installed sklearn version's accepted values.
+    `max_features="auto"` was the sklearn default for tree ensembles prior to
+    1.1 and was removed outright in 1.3+, so it's a common, plausible LLM
+    suggestion that would otherwise fail every candidate using it. Map it to
+    its historical equivalent: sqrt(n_features) for classifiers, "no
+    restriction" (None) for regressors — not just a guess of "sqrt" for both."""
+    if estimator in _TREE_ENSEMBLE_ESTIMATORS and hyperparams.get("max_features") == "auto":
+        hyperparams = dict(hyperparams)
+        hyperparams["max_features"] = "sqrt" if estimator.endswith("Classifier") else None
+    return hyperparams
+
+
 def _build_estimator(library: str, estimator: str, hyperparams: dict[str, Any]):
     if library == "sklearn":
         import sklearn.ensemble as ens
@@ -92,6 +114,7 @@ def _build_estimator(library: str, estimator: str, hyperparams: dict[str, Any]):
 
     if estimator not in registry:
         raise ValueError(f"unknown estimator '{estimator}' for library '{library}'")
+    hyperparams = _sanitize_hyperparams(estimator, hyperparams)
     return registry[estimator](**hyperparams)
 
 

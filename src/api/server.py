@@ -36,7 +36,9 @@ from pydantic import BaseModel
 
 from src.export.script_export import generate_training_script
 from src.graph.build_graph import build_intake_graph, build_prep_graph, build_train_graph
-from src.insights.auto_insights import generate_insights
+from src.agents.chat_node import answer_chat_question
+from src.insights.auto_insights import generate_insights, suggested_questions
+from src.profiling.heuristics import target_too_high_cardinality_for_classification
 from src.llm.tracing import read_trace
 from src.state import PipelineState, new_state
 from src.training.dispatch import load_model_schema, predict_one
@@ -144,9 +146,22 @@ def _profile_columns(state: PipelineState) -> list[dict[str, Any]]:
             "null_rate": info.get("null_rate"),
             "n_unique": info.get("n_unique"),
             "is_pii": info.get("is_pii", False),
+            # aggregate counts only (already PII-redacted upstream) — feeds
+            # the class-distribution panel for the confirmed target column
+            "top_values": info.get("top_values"),
         }
         for name, info in columns.items()
     ]
+
+
+def _best_score(entry: dict[str, Any]) -> float | None:
+    """Best model's score on the run's own success metric, for the run list."""
+    state = entry["state"]
+    metric = (state.get("task_spec") or {}).get("metric")
+    metrics = (state.get("best_model") or {}).get("metrics") or {}
+    if metric and metric in metrics:
+        return round(float(metrics[metric]), 4)
+    return None
 
 
 _STAGE_MESSAGES = {
@@ -215,6 +230,39 @@ def _plain_language_events(state: PipelineState, stages_done: list[str]) -> list
     return events
 
 
+def _chat_context(state: PipelineState) -> dict[str, Any]:
+    """Trimmed subset of _run_summary's already-redacted, already-computed
+    fields for the chat prompt — skips event timelines/stage messages to
+    keep the prompt compact (see the chat design spec)."""
+    feature_plan = state.get("feature_plan") or {}
+    return _json_safe(
+        {
+            "task_spec": state.get("task_spec"),
+            "profile_summary": {
+                "row_count": state.get("profile", {}).get("row_count"),
+                "column_count": state.get("profile", {}).get("column_count"),
+            },
+            "eda_insights": (state.get("eda_report") or {}).get("insights", []),
+            "leakage_flags": state.get("leakage_flags", []),
+            "feature_plan_steps": [
+                {"op": s.get("op"), "columns": s.get("columns"), "rationale": s.get("rationale")}
+                for s in feature_plan.get("steps", [])
+            ],
+            "training_results": [
+                {
+                    "candidate_name": r.get("candidate_name"),
+                    "status": r.get("status"),
+                    "metrics": r.get("metrics"),
+                    "tuning": r.get("tuning"),
+                }
+                for r in state.get("training_results", [])
+            ],
+            "best_model": state.get("best_model"),
+            "report_narrative": (state.get("report") or {}).get("narrative"),
+        }
+    )
+
+
 def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
     state = entry["state"]
     stages_done: list[str] = []
@@ -230,6 +278,8 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
     events = _plain_language_events(state, stages_done)
     for event in events:
         event["timestamp"] = completed_at_by_node.get(event["stage"])
+
+    insights = generate_insights(state, stages_done)
 
     return _json_safe(
         {
@@ -259,15 +309,20 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
                 "pii_columns_detected": state.get("profile", {})
                 .get("pii_report", {})
                 .get("pii_columns_detected"),
+                "quality": state.get("profile", {}).get("quality"),
             },
             "profile_columns": _profile_columns(state),
             "leakage_flags": state.get("leakage_flags", []),
             "feature_plan": state.get("feature_plan"),
             "training_results": state.get("training_results", []),
             "best_model": state.get("best_model"),
-            "insights": generate_insights(state, stages_done),
+            "insights": insights,
             "report": state.get("report", {}).get("narrative"),
             "errors": state.get("errors", []),
+            "chat_history": entry.get("chat_history", []),
+            "suggested_questions": suggested_questions(
+                insights, state.get("task_spec") or {}, state.get("best_model") or {}
+            ),
         }
     )
 
@@ -292,6 +347,7 @@ async def create_run(file: UploadFile = File(...), description: str = Form(...))
             "created_at": time.time(),
             "finished_at": None,
             "cancel_requested": False,
+            "chat_history": [],
         }
 
     threading.Thread(target=_run_intake, args=(run_id,), daemon=True).start()
@@ -308,6 +364,8 @@ def list_runs() -> list[dict[str, Any]]:
                 "status": entry["status"],
                 "created_at": entry["created_at"],
                 "description": entry["state"].get("use_case_description"),
+                "best_score": _best_score(entry),
+                "metric": (entry["state"].get("task_spec") or {}).get("metric"),
             }
             for run_id, entry in sorted(_runs.items(), key=lambda kv: -kv[1]["created_at"])
         ]
@@ -336,6 +394,20 @@ def confirm_run(run_id: str, body: ConfirmRequest) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail=f"'{time_column}' is not a column of this dataset")
         if time_column and time_column == body.target_column:
             raise HTTPException(status_code=400, detail="time_column cannot be the same as the target column")
+        if body.task_type == "classification":
+            target_info = columns.get(body.target_column, {})
+            row_count = state.get("profile", {}).get("row_count")
+            n_unique = target_info.get("n_unique")
+            if row_count and n_unique and target_too_high_cardinality_for_classification(n_unique, row_count):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"'{body.target_column}' has {n_unique} unique values across {row_count} rows — "
+                        "too high-cardinality to be a meaningful classification target (it looks like an "
+                        "identifier or free-text column rather than a category). Pick a different target "
+                        "column, or choose 'regression' if this is a continuous value."
+                    ),
+                )
         if body.cv_enabled and body.cv_folds < 2:
             raise HTTPException(status_code=400, detail="cv_folds must be at least 2 when cross-validation is enabled")
 
@@ -490,6 +562,34 @@ def predict(run_id: str, body: PredictRequest) -> dict[str, Any]:
 def get_trace(run_id: str) -> list[dict[str, Any]]:
     _get_entry(run_id)
     return _json_safe(read_trace(run_id))
+
+
+class ChatRequest(BaseModel):
+    question: str
+
+
+@app.post("/api/runs/{run_id}/chat")
+def chat(run_id: str, body: ChatRequest) -> dict[str, Any]:
+    """Answer a question about this run's already-computed results (see
+    docs/superpowers/specs/2026-07-05-ai-assistant-chat-design.md). Only
+    available once the report is ready — gated here, not just in the UI, so
+    the contract holds regardless of client."""
+    entry = _get_entry(run_id)
+    with _lock:
+        if entry["status"] not in ("completed", "failed"):
+            raise HTTPException(status_code=409, detail=f"run is '{entry['status']}', not ready for questions yet")
+        state = entry["state"]
+        context = _chat_context(state)
+        history_for_prompt = [{"role": h["role"], "content": h["content"]} for h in entry["chat_history"]]
+
+    answer = answer_chat_question(run_id=run_id, context=context, history=history_for_prompt, question=body.question)
+
+    with _lock:
+        now = time.time()
+        entry["chat_history"].append({"role": "user", "content": body.question, "timestamp": now})
+        entry["chat_history"].append({"role": "assistant", "content": answer, "timestamp": now})
+
+    return {"answer": answer}
 
 
 class NoCacheStaticFiles(StaticFiles):
