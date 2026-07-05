@@ -29,11 +29,15 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+import os
+
+import yaml
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from src.auth.session import create_session, destroy_session, get_session
 from src.export.script_export import generate_training_script
 from src.graph.build_graph import build_intake_graph, build_prep_graph, build_train_graph
 from src.agents.chat_node import answer_chat_question
@@ -53,6 +57,77 @@ _lock = threading.Lock()
 _intake_graph = build_intake_graph()
 _prep_graph = build_prep_graph()
 _train_graph = build_train_graph()
+
+SESSION_COOKIE_NAME = "automl_session"
+
+
+def _auth_config() -> dict[str, Any]:
+    with open("config/runtime.yaml", "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)["auth"]
+
+
+def _get_session_from_request(request: Request) -> dict[str, Any] | None:
+    return get_session(request.cookies.get(SESSION_COOKIE_NAME))
+
+
+def require_session(request: Request) -> dict[str, Any]:
+    """FastAPI dependency: 401s any request without a valid, unexpired
+    session cookie. Applied to every /api/runs* endpoint (Task 3) — this is
+    a demo-credential gate for a single-user local tool, not production
+    multi-tenant auth (see docs/superpowers/specs/2026-07-05-login-page-design.md)."""
+    session = _get_session_from_request(request)
+    if session is None:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    return session
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/auth/login")
+def login(body: LoginRequest, response: Response) -> dict[str, Any]:
+    demo_email = os.environ.get("AUTOML_DEMO_EMAIL", "demo@automl.local")
+    demo_password = os.environ.get("AUTOML_DEMO_PASSWORD", "demo123")
+    if body.email.strip().lower() != demo_email.strip().lower() or body.password != demo_password:
+        raise HTTPException(status_code=401, detail="invalid email or password")
+
+    ttl_hours = _auth_config()["session_ttl_hours"]
+    token = create_session(demo_email, ttl_hours)
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        token,
+        max_age=int(ttl_hours * 3600),
+        httponly=True,
+        samesite="lax",
+        secure=False,  # local http dev (run_server.py); see design spec
+        path="/",
+    )
+    return {"ok": True}
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response) -> dict[str, Any]:
+    destroy_session(request.cookies.get(SESSION_COOKIE_NAME))
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return {"ok": True}
+
+
+@app.get("/api/auth/session")
+def auth_session(request: Request) -> dict[str, Any]:
+    session = _get_session_from_request(request)
+    return {"authenticated": session is not None, "email": session["email"] if session else None}
+
+
+@app.get("/api/auth/demo-credentials")
+def demo_credentials() -> dict[str, Any]:
+    """Unauthenticated by design — this is a demo credential for a
+    single-user local tool, not a secret (see design spec)."""
+    return {
+        "email": os.environ.get("AUTOML_DEMO_EMAIL", "demo@automl.local"),
+        "password": os.environ.get("AUTOML_DEMO_PASSWORD", "demo123"),
+    }
 
 
 def _json_safe(obj: Any) -> Any:
@@ -328,7 +403,9 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
 
 
 @app.post("/api/runs")
-async def create_run(file: UploadFile = File(...), description: str = Form(...)) -> dict[str, Any]:
+async def create_run(
+    file: UploadFile = File(...), description: str = Form(...), _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
     if not (file.filename or "").lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="only .csv uploads are supported in this local build")
 
@@ -355,7 +432,7 @@ async def create_run(file: UploadFile = File(...), description: str = Form(...))
 
 
 @app.get("/api/runs")
-def list_runs() -> list[dict[str, Any]]:
+def list_runs(_session: dict[str, Any] = Depends(require_session)) -> list[dict[str, Any]]:
     with _lock:
         return [
             {
@@ -372,14 +449,16 @@ def list_runs() -> list[dict[str, Any]]:
 
 
 @app.get("/api/runs/{run_id}")
-def get_run(run_id: str) -> dict[str, Any]:
+def get_run(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> dict[str, Any]:
     entry = _get_entry(run_id)
     with _lock:
         return _run_summary(run_id, entry)
 
 
 @app.post("/api/runs/{run_id}/confirm")
-def confirm_run(run_id: str, body: ConfirmRequest) -> dict[str, Any]:
+def confirm_run(
+    run_id: str, body: ConfirmRequest, _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
     entry = _get_entry(run_id)
     with _lock:
         if entry["status"] != "awaiting_confirmation":
@@ -444,7 +523,9 @@ _VALID_RESAMPLING_METHODS = {"none", "smote", "random_oversample", "random_under
 
 
 @app.post("/api/runs/{run_id}/approve-features")
-def approve_features(run_id: str, body: FeatureApprovalRequest) -> dict[str, Any]:
+def approve_features(
+    run_id: str, body: FeatureApprovalRequest, _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
     entry = _get_entry(run_id)
     with _lock:
         if entry["status"] != "awaiting_feature_approval":
@@ -472,7 +553,7 @@ def approve_features(run_id: str, body: FeatureApprovalRequest) -> dict[str, Any
 
 
 @app.post("/api/runs/{run_id}/cancel")
-def cancel_run(run_id: str) -> dict[str, Any]:
+def cancel_run(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> dict[str, Any]:
     """Best-effort cancellation (PRODUCT.md 3.3: 'always show a way to cancel
     a running pipeline'). Takes effect between graph steps — an in-flight
     node/training job already running is not interrupted mid-execution, but
@@ -496,14 +577,14 @@ def _require_model_path(entry: dict[str, Any]) -> str:
 
 
 @app.get("/api/runs/{run_id}/model")
-def download_model(run_id: str):
+def download_model(run_id: str, _session: dict[str, Any] = Depends(require_session)):
     entry = _get_entry(run_id)
     model_path = _require_model_path(entry)
     return FileResponse(model_path, filename=f"automl_{run_id}.joblib", media_type="application/octet-stream")
 
 
 @app.get("/api/runs/{run_id}/script")
-def download_script(run_id: str) -> Response:
+def download_script(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> Response:
     """Standalone Python script reproducing this run's feature engineering +
     training (PRODUCT.md 3.4 'export pipeline as code'; PRD 2.3 step 6)."""
     entry = _get_entry(run_id)
@@ -518,7 +599,7 @@ def download_script(run_id: str) -> Response:
 
 
 @app.get("/api/runs/{run_id}/model/schema")
-def get_model_schema(run_id: str) -> dict[str, Any]:
+def get_model_schema(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> dict[str, Any]:
     """Feature columns + task info the frontend's 'test the model' tab needs
     to build an input form without hardcoding anything."""
     entry = _get_entry(run_id)
@@ -545,7 +626,9 @@ class PredictRequest(BaseModel):
 
 
 @app.post("/api/runs/{run_id}/predict")
-def predict(run_id: str, body: PredictRequest) -> dict[str, Any]:
+def predict(
+    run_id: str, body: PredictRequest, _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
     """Score one user-supplied row against the winning model — the
     'ready-made deployment to test the model' PRODUCT.md 3.4/3.5 gestures at,
     scoped to local interactive testing rather than a hosted endpoint."""
@@ -559,7 +642,7 @@ def predict(run_id: str, body: PredictRequest) -> dict[str, Any]:
 
 
 @app.get("/api/runs/{run_id}/trace")
-def get_trace(run_id: str) -> list[dict[str, Any]]:
+def get_trace(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> list[dict[str, Any]]:
     _get_entry(run_id)
     return _json_safe(read_trace(run_id))
 
@@ -569,7 +652,7 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/api/runs/{run_id}/chat")
-def chat(run_id: str, body: ChatRequest) -> dict[str, Any]:
+def chat(run_id: str, body: ChatRequest, _session: dict[str, Any] = Depends(require_session)) -> dict[str, Any]:
     """Answer a question about this run's already-computed results (see
     docs/superpowers/specs/2026-07-05-ai-assistant-chat-design.md). Only
     available once the report is ready — gated here, not just in the UI, so
@@ -603,6 +686,17 @@ class NoCacheStaticFiles(StaticFiles):
         response = await super().get_response(path, scope)
         response.headers["Cache-Control"] = "no-store"
         return response
+
+
+@app.get("/")
+def serve_index(request: Request):
+    """The one static path that needs server-side auth enforcement — every
+    other static asset (styles.css, app.js, login.html/login.js) stays
+    reachable unauthenticated via the mount below, but the app shell itself
+    should redirect to the login page rather than flash stale/empty UI."""
+    if _get_session_from_request(request) is None:
+        return RedirectResponse("/login.html")
+    return FileResponse("frontend/index.html")
 
 
 # Serve the frontend last so /api/* wins routing.

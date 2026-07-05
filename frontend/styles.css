@@ -705,3 +705,51 @@ select, textarea, input[type="text"], input[type="number"] {
 .chat-form input[type="text"] { flex: 1; min-width: 0; font-size: var(--text-sm); }
 .chat-form .btn { padding: 9px 12px; flex-shrink: 0; }
 .chat-error { color: var(--accent-danger); font-size: var(--text-xs); margin-top: var(--sp-2); }
+
+/* ================= login page ================= */
+
+.login-page { min-height: 100vh; display: flex; flex-direction: column; }
+
+.login-nav {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-5);
+}
+.login-nav-brand { display: flex; align-items: center; gap: 10px; color: var(--text-primary); }
+.login-nav-name { font-family: var(--font-display); font-weight: 700; font-size: var(--text-base); }
+.login-nav-links { display: flex; align-items: center; gap: var(--sp-4); }
+.login-nav-link { font-size: var(--text-sm); font-weight: 550; color: var(--text-secondary); cursor: default; }
+@media (max-width: 780px) { .login-nav-links { display: none; } }
+
+.login-theme-toggle {
+  width: 36px; height: 36px; border-radius: 999px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg-surface); border: 1px solid var(--border-subtle);
+  color: var(--text-secondary); cursor: pointer;
+}
+.login-theme-toggle:hover { color: var(--accent-primary); border-color: var(--accent-primary); }
+
+.login-hero {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  padding: var(--sp-5) var(--sp-3);
+  background:
+    radial-gradient(600px circle at 15% 10%, var(--accent-primary-soft), transparent 60%),
+    radial-gradient(600px circle at 85% 90%, var(--accent-primary-soft), transparent 60%),
+    var(--bg-base);
+}
+
+.login-card {
+  width: 100%; max-width: 420px;
+  background: var(--bg-surface); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: var(--sp-5); text-align: center;
+}
+.login-title { font-size: var(--text-xl); margin-top: var(--sp-3); }
+.login-sub { font-size: var(--text-sm); margin: 4px 0 var(--sp-4); }
+.login-form { display: grid; gap: var(--sp-3); text-align: left; }
+.login-submit { width: 100%; justify-content: center; }
+.login-error { color: var(--accent-danger); font-size: var(--text-xs); margin: 0; }
+.login-demo-hint {
+  margin-top: var(--sp-4); padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-surface-raised); border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
