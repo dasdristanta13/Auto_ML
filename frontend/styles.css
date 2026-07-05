@@ -367,7 +367,29 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .train-progress { margin-top: var(--sp-3); padding: var(--sp-3); background: var(--bg-surface-raised); border-radius: var(--radius-sm); }
 .train-progress-text { font-size: var(--text-sm); margin-bottom: var(--sp-2); display: flex; justify-content: space-between; gap: var(--sp-2); flex-wrap: wrap; }
 .train-progress-track { height: 8px; border-radius: 999px; background: var(--border-subtle); overflow: hidden; }
-.train-progress-fill { height: 100%; border-radius: 999px; background: var(--accent-primary); transition: width 0.4s ease; }
+.train-progress-fill { height: 100%; width: 100%; border-radius: 999px; background: var(--accent-primary); transform-origin: left; transform: scaleX(0); transition: transform 0.4s ease; }
+
+/* per-candidate hyperparameter-tuning progress (live, fed by the 2s poll) */
+.tuning-progress-list { display: grid; gap: 6px; margin-top: 10px; }
+.tuning-row { display: grid; grid-template-columns: minmax(110px, 160px) 1fr minmax(150px, auto); align-items: center; gap: var(--sp-2); }
+.tuning-name { font-size: var(--text-xs); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tuning-track { height: 6px; border-radius: 999px; background: var(--border-subtle); overflow: hidden; }
+.tuning-fill { display: block; height: 100%; width: 100%; border-radius: 999px; background: var(--cat-2); transform-origin: left; transform: scaleX(0); transition: transform 0.4s ease; }
+.tuning-fill.failed { background: var(--accent-danger); }
+.tuning-status { color: var(--text-secondary); text-align: right; }
+
+/* tuning trend chart (score per Optuna trial + best-so-far line) */
+.tt-grid { stroke: var(--border-subtle); stroke-width: 1; }
+.tt-axis { fill: var(--text-secondary); font-size: 10px; font-family: var(--font-mono); }
+.tt-final { fill: var(--text-primary); font-size: 11px; font-weight: 650; font-family: var(--font-mono); }
+.tt-score-line { stroke: var(--cat-1); stroke-width: 2; stroke-linejoin: round; }
+.tt-best-line { stroke: var(--cat-2); stroke-width: 2; stroke-dasharray: 5 4; stroke-linejoin: round; }
+.tt-dot { fill: var(--cat-1); stroke: var(--bg-surface); stroke-width: 2; }
+.tuning-legend { list-style: none; padding: 0; margin-top: var(--sp-2); display: flex; gap: var(--sp-4); font-size: var(--text-xs); color: var(--text-secondary); }
+.tuning-legend li { display: flex; align-items: center; gap: 6px; }
+.tt-chip { width: 14px; height: 0; border-top: 3px solid; border-radius: 2px; }
+.tt-chip-score { border-color: var(--cat-1); }
+.tt-chip-best { border-color: var(--cat-2); border-top-style: dashed; }
 
 /* ================= chips / confidence badges ================= */
 

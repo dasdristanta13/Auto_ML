@@ -119,9 +119,13 @@ class ConfirmRequest(BaseModel):
     target_column: str
     task_type: str
     metric: str
+    # optional: order-by column for a chronological (leakage-safe) train/test
+    # split on time-ordered data; None/empty means a random split.
+    time_column: Optional[str] = None
     constraints: list[str] = []
     cv_enabled: bool = True
     cv_folds: int = 5
+    tuning_enabled: bool = True
 
 
 def _get_entry(run_id: str) -> dict[str, Any]:
@@ -245,6 +249,7 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
                 "enabled": state.get("cv_enabled", True),
                 "requested_folds": state.get("cv_folds", 5),
             },
+            "tuning_config": {"enabled": state.get("tuning_enabled", True)},
             "eda_report": state.get("eda_report"),
             "resampling_suggestion": state.get("resampling_suggestion"),
             "resampling_plan": state.get("resampling_plan"),
@@ -326,6 +331,11 @@ def confirm_run(run_id: str, body: ConfirmRequest) -> dict[str, Any]:
         columns = state.get("profile", {}).get("columns", {})
         if columns and body.target_column not in columns:
             raise HTTPException(status_code=400, detail=f"'{body.target_column}' is not a column of this dataset")
+        time_column = body.time_column or None
+        if time_column and columns and time_column not in columns:
+            raise HTTPException(status_code=400, detail=f"'{time_column}' is not a column of this dataset")
+        if time_column and time_column == body.target_column:
+            raise HTTPException(status_code=400, detail="time_column cannot be the same as the target column")
         if body.cv_enabled and body.cv_folds < 2:
             raise HTTPException(status_code=400, detail="cv_folds must be at least 2 when cross-validation is enabled")
 
@@ -334,6 +344,7 @@ def confirm_run(run_id: str, body: ConfirmRequest) -> dict[str, Any]:
             target_column=body.target_column,
             task_type=body.task_type,
             metric=body.metric,
+            time_column=time_column,
             constraints=body.constraints,
             is_ambiguous=False,
             ambiguity_reason=None,
@@ -341,6 +352,7 @@ def confirm_run(run_id: str, body: ConfirmRequest) -> dict[str, Any]:
         state["task_spec"] = task_spec
         state["cv_enabled"] = body.cv_enabled
         state["cv_folds"] = body.cv_folds
+        state["tuning_enabled"] = body.tuning_enabled
         state["needs_human_confirmation"] = False
         state["human_confirmed"] = True
         entry["status"] = "running"
@@ -445,6 +457,7 @@ def get_model_schema(run_id: str) -> dict[str, Any]:
     return _json_safe(
         {
             "feature_columns": schema["feature_columns"],
+            "feature_types": schema.get("feature_types", {}),
             "task_type": task_spec.get("task_type"),
             "target_column": task_spec.get("target_column"),
             "candidate_name": best_model.get("candidate_name"),
@@ -453,7 +466,10 @@ def get_model_schema(run_id: str) -> dict[str, Any]:
 
 
 class PredictRequest(BaseModel):
-    values: dict[str, float]
+    # raw feature values: numbers for numeric columns, strings for
+    # categorical (e.g. target-encoded) columns — the model pipeline applies
+    # its own preprocessing.
+    values: dict[str, Any]
 
 
 @app.post("/api/runs/{run_id}/predict")

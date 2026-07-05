@@ -286,6 +286,7 @@ function render(run) {
   renderDatasetSummary(run);
   renderInsights(run);
   renderResults(run);
+  renderTuningTrend(run);
   renderFeatureImportance(run);
   renderActivity(run);
   renderReport(run);
@@ -444,7 +445,34 @@ function renderTrainProgress(run) {
   $("train-progress-text").innerHTML = `
     <span>Training ${results.length} candidate model(s)${runningNames.length ? ` — now: ${escapeHtml(runningNames.join(", "))}` : ""}</span>
     <span class="mono">${finished} of ${results.length} finished · ${pct}%</span>`;
-  $("train-progress-fill").style.width = `${Math.max(pct, 4)}%`;
+  $("train-progress-fill").style.transform = `scaleX(${Math.max(pct, 4) / 100})`;
+  renderTuningProgress(results);
+}
+
+function tuningStatusText(result) {
+  const t = result.tuning || {};
+  if (result.status === "pending") return "queued";
+  if (t.note) return t.note;
+  if (!t.enabled) return result.status === "running" ? "training…" : result.status;
+  const last = t.history[t.history.length - 1];
+  const best = last ? `best ${t.metric} ${last.best_score.toFixed(3)}` : "starting…";
+  const doneTraining = ["succeeded", "failed"].includes(result.status);
+  return doneTraining ? `${t.trials_done} trial(s) · ${best}` : `trial ${t.trials_done} of ${t.trials_total} · ${best}`;
+}
+
+function renderTuningProgress(results) {
+  $("tuning-progress-list").innerHTML = results
+    .map((r) => {
+      const t = r.tuning || {};
+      const pct = t.enabled && t.trials_total ? Math.round((t.trials_done / t.trials_total) * 100) : r.status === "succeeded" ? 100 : 0;
+      return `
+      <div class="tuning-row">
+        <span class="tuning-name" title="${escapeHtml(r.candidate_name)}">${escapeHtml(r.candidate_name)}</span>
+        <span class="tuning-track"><span class="tuning-fill ${r.status === "failed" ? "failed" : ""}" style="transform:scaleX(${Math.max(pct, 3) / 100})"></span></span>
+        <span class="tuning-status mono small">${escapeHtml(tuningStatusText(r))}</span>
+      </div>`;
+    })
+    .join("");
 }
 
 /* ================= confirm checkpoint ================= */
@@ -471,12 +499,17 @@ function renderConfirm(run) {
   const targetSelect = $("target-select");
   if (!targetSelect.dataset.filled) {
     targetSelect.innerHTML = "";
+    const timeSelect = $("time-select");
+    timeSelect.innerHTML = `<option value="">none — rows are not time-ordered</option>`;
     for (const col of run.profile_columns || []) {
       const opt = document.createElement("option");
       opt.value = col.name;
       opt.textContent = `${col.name} (${col.dtype}${col.is_pii ? ", PII" : ""})`;
       if (col.name === spec.target_column) opt.selected = true;
       targetSelect.appendChild(opt);
+      const timeOpt = opt.cloneNode(true);
+      timeOpt.selected = col.name === spec.time_column;
+      timeSelect.appendChild(timeOpt);
     }
     targetSelect.dataset.filled = "1";
     if (spec.task_type) $("tasktype-select").value = spec.task_type;
@@ -509,9 +542,11 @@ $("confirm-form").addEventListener("submit", async (e) => {
     target_column: $("target-select").value,
     task_type: $("tasktype-select").value,
     metric: $("metric-select").value,
+    time_column: $("time-select").value || null,
     constraints: [],
     cv_enabled: cvEnabled,
     cv_folds: cvEnabled ? Math.max(2, Math.min(10, Number($("cv-folds-input").value) || 5)) : 0,
+    tuning_enabled: $("tuning-enabled-input").checked,
   };
   const res = await fetch(`/api/runs/${currentRunId}/confirm`, {
     method: "POST",
@@ -752,6 +787,69 @@ function cvCell(result, metric) {
   return `<span title="${result.cv_folds}-fold cross-validation">${cv.mean.toFixed(4)} ± ${cv.std.toFixed(3)}</span>`;
 }
 
+/* ================= tuning trend chart ================= */
+
+function renderTuningTrend(run) {
+  const card = $("tuning-card");
+  const best = run.best_model || {};
+  const t = best.tuning || {};
+  const history = t.history || [];
+  if (!t.enabled || history.length < 2) {
+    card.classList.add("hidden");
+    return;
+  }
+  card.classList.remove("hidden");
+
+  const direction = t.lower_is_better ? "lower is better" : "higher is better";
+  $("tuning-sub").textContent = `${best.candidate_name} · ${history.length} trials · ${t.metric} (${direction})`;
+
+  // geometry: one x slot per trial, y spans the observed score range with headroom
+  const W = 520, H = 190, padL = 46, padR = 14, padT = 12, padB = 30;
+  const scores = history.map((h) => h.score).concat(history.map((h) => h.best_score));
+  let lo = Math.min(...scores), hi = Math.max(...scores);
+  if (hi - lo < 1e-9) { hi += 0.001; lo -= 0.001; }
+  const span = hi - lo;
+  lo -= span * 0.08; hi += span * 0.08;
+  const x = (i) => padL + (history.length === 1 ? 0 : (i / (history.length - 1)) * (W - padL - padR));
+  const y = (v) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
+
+  const gridValues = [lo + (hi - lo) * 0.1, lo + (hi - lo) * 0.5, lo + (hi - lo) * 0.9];
+  const grid = gridValues
+    .map(
+      (v) => `
+      <line x1="${padL}" y1="${y(v)}" x2="${W - padR}" y2="${y(v)}" class="tt-grid"></line>
+      <text x="${padL - 6}" y="${y(v) + 3}" class="tt-axis" text-anchor="end">${v.toFixed(3)}</text>`
+    )
+    .join("");
+
+  const scoreLine = history.map((h, i) => `${x(i)},${y(h.score)}`).join(" ");
+  const bestLine = history.map((h, i) => `${x(i)},${y(h.best_score)}`).join(" ");
+  const dots = history
+    .map(
+      (h, i) => `
+      <circle cx="${x(i)}" cy="${y(h.score)}" r="3.5" class="tt-dot">
+        <title>${h.trial === 0 ? "Trial 0 (proposed baseline)" : `Trial ${h.trial}`} — ${t.metric}: ${h.score.toFixed(4)} (best so far ${h.best_score.toFixed(4)})</title>
+      </circle>`
+    )
+    .join("");
+  const last = history[history.length - 1];
+  const finalLabel = `<text x="${x(history.length - 1) - 6}" y="${y(last.best_score) - 8}" class="tt-final" text-anchor="end">${last.best_score.toFixed(4)}</text>`;
+
+  $("tuning-chart").innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Hyperparameter tuning: ${escapeHtml(t.metric)} per trial for ${escapeHtml(best.candidate_name || "the best model")}" style="width:100%;height:auto">
+      ${grid}
+      <polyline points="${bestLine}" class="tt-best-line" fill="none"></polyline>
+      <polyline points="${scoreLine}" class="tt-score-line" fill="none"></polyline>
+      ${dots}
+      ${finalLabel}
+      <text x="${(padL + W - padR) / 2}" y="${H - 8}" class="tt-axis" text-anchor="middle">trial</text>
+    </svg>`;
+
+  $("tuning-legend").innerHTML = `
+    <li><span class="tt-chip tt-chip-score"></span>per-trial score</li>
+    <li><span class="tt-chip tt-chip-best"></span>best so far</li>`;
+}
+
 /* ================= feature importance ================= */
 
 function renderFeatureImportance(run) {
@@ -864,14 +962,16 @@ async function loadPredictTab(run) {
   form.innerHTML = `<p class="muted small">Loading model inputs…</p>`;
   try {
     const schema = await (await fetch(`/api/runs/${run.run_id}/model/schema`)).json();
+    const types = schema.feature_types || {};
     form.innerHTML = schema.feature_columns
-      .map(
-        (col) => `
+      .map((col) => {
+        const isText = types[col] === "text";
+        return `
         <label class="field">
           <span class="mono small">${escapeHtml(col)}</span>
-          <input type="number" step="any" name="${escapeHtml(col)}" placeholder="0" />
-        </label>`
-      )
+          <input type="${isText ? "text" : "number"}" ${isText ? "" : 'step="any"'} name="${escapeHtml(col)}" data-kind="${isText ? "text" : "number"}" placeholder="${isText ? "category" : "0"}" />
+        </label>`;
+      })
       .join("");
   } catch {
     form.innerHTML = `<p class="muted small">Could not load model inputs for this run.</p>`;
@@ -883,7 +983,8 @@ $("predict-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const values = {};
   for (const input of e.target.querySelectorAll("input[name]")) {
-    values[input.name] = input.value === "" ? 0 : Number(input.value);
+    if (input.value === "") continue; // omitted values are imputed by the model pipeline
+    values[input.name] = input.dataset.kind === "text" ? input.value : Number(input.value);
   }
   const resultBox = $("predict-result");
   resultBox.classList.remove("hidden", "is-error");

@@ -128,7 +128,9 @@ def generate_training_script(state: dict[str, Any]) -> str:
     winning_candidate = next((c for c in candidate_models if c.get("name") == candidate_name), {})
     library = winning_candidate.get("library", "sklearn")
     estimator_name = winning_candidate.get("estimator", "RandomForestClassifier" if task_type == "classification" else "RandomForestRegressor")
-    hyperparams = winning_candidate.get("hyperparams", {})
+    # prefer the Optuna-tuned params the winning model was actually fit with;
+    # fall back to the LLM-proposed hyperparams when tuning was off/skipped
+    hyperparams = (best_model.get("tuning") or {}).get("best_params") or winning_candidate.get("hyperparams", {})
 
     estimator_import = _ESTIMATOR_IMPORTS.get((library, estimator_name), "# unknown estimator — add the right import here")
     hyperparams_repr = ", ".join(f"{k}={v!r}" for k, v in hyperparams.items())
@@ -167,6 +169,12 @@ DATASET_PATH at your CSV and run it.
 Caveats carried over from the report: target-leakage detection is heuristic
 and may have missed cases — review the leakage flags in the report before
 trusting this model in production.
+
+Simplification note: this script applies all feature transforms before the
+train/test split for readability. The platform itself fits statistical
+transforms (imputation means, scalers, target encodings) on the training
+fold only, so metrics printed by this script can differ slightly (and target
+encoding here will look optimistic). Prefer the platform's reported metrics.
 """
 
 import pandas as pd

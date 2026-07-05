@@ -61,6 +61,7 @@ def _looks_datetime(name: str, series: pd.Series) -> bool:
 
 def _suggest_feature_steps(df: pd.DataFrame, profile: dict[str, Any], task_spec: dict[str, Any]) -> list[dict[str, Any]]:
     target_column = task_spec.get("target_column")
+    time_column = task_spec.get("time_column")
     pii_columns = set((profile.get("pii_report", {}) or {}).get("columns", {}) or {})
     row_count = len(df)
 
@@ -69,13 +70,29 @@ def _suggest_feature_steps(df: pd.DataFrame, profile: dict[str, Any], task_spec:
     any_outlier_heavy = False
 
     for col in df.columns:
-        if col == target_column or col in pii_columns:
+        # the designated time_column must survive untouched: training's
+        # chronological split sorts by it (src/training/dispatch._split), so
+        # decomposing or dropping it would silently disable that split.
+        if col == target_column or col == time_column or col in pii_columns:
             continue
         series = df[col]
         dtype = str(series.dtype)
         n_unique = int(series.nunique(dropna=True))
         null_rate = float(series.isna().mean())
         is_numeric = pd.api.types.is_numeric_dtype(series)
+
+        # datetime check comes BEFORE the identifier heuristic — a daily date
+        # column is near-unique by nature and would otherwise be misread as an
+        # identifier and dropped instead of decomposed.
+        if not is_numeric and _looks_datetime(col, series):
+            suggestions.append(
+                _step(
+                    "datetime_decompose", [col], {},
+                    f"'{col}' looks like a timestamp; decomposing into year/month/day/day-of-week usually "
+                    "carries more model-usable signal than the raw value.",
+                )
+            )
+            continue
 
         if row_count > _MIN_ROWS_FOR_IDENTIFIER_CHECK and looks_like_identifier(col, dtype, n_unique, row_count):
             suggestions.append(
@@ -99,14 +116,6 @@ def _suggest_feature_steps(df: pd.DataFrame, profile: dict[str, Any], task_spec:
             if _iqr_outlier_rate(series.dropna()) > _OUTLIER_HEAVY_RATE:
                 any_outlier_heavy = True
             numeric_cols_for_scaling.append(col)
-        elif _looks_datetime(col, series):
-            suggestions.append(
-                _step(
-                    "datetime_decompose", [col], {},
-                    f"'{col}' looks like a timestamp; decomposing into year/month/day/day-of-week usually "
-                    "carries more model-usable signal than the raw value.",
-                )
-            )
         else:
             if null_rate > 0:
                 suggestions.append(

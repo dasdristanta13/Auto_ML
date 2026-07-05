@@ -11,7 +11,7 @@ from typing import Any
 
 import pandas as pd
 import yaml
-from sklearn.preprocessing import MinMaxScaler, OrdinalEncoder, RobustScaler, StandardScaler
+from sklearn.preprocessing import OrdinalEncoder
 
 from src.profiling.eda import run_eda
 from src.profiling.leakage import detect_target_leakage
@@ -126,15 +126,15 @@ def feature_approval_checkpoint_node(state: PipelineState) -> PipelineState:
 
 
 def _apply_builtin_step(df: pd.DataFrame, op: str, columns: list[str], params: dict[str, Any]) -> pd.DataFrame:
+    """Stateless/structural steps only. Statistical steps (mean/median
+    impute, scale, target encode) never reach here — _is_training_time_step
+    defers them to the training job so they are fit on the training fold
+    only (see src/training/dispatch._build_preprocessor)."""
     df = df.copy()
     if op == "impute":
         strategy = params.get("strategy", "mean")
         for col in columns:
-            if strategy == "mean":
-                df[col] = df[col].fillna(df[col].mean())
-            elif strategy == "median":
-                df[col] = df[col].fillna(df[col].median())
-            elif strategy == "most_frequent":
+            if strategy == "most_frequent":
                 df[col] = df[col].fillna(df[col].mode().iloc[0] if not df[col].mode().empty else df[col])
             elif strategy == "constant":
                 df[col] = df[col].fillna(params.get("fill_value", 0))
@@ -145,16 +145,6 @@ def _apply_builtin_step(df: pd.DataFrame, op: str, columns: list[str], params: d
         elif method == "ordinal":
             encoder = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)
             df[columns] = encoder.fit_transform(df[columns].astype(str))
-        elif method == "target":
-            target_col = params.get("target_column")
-            for col in columns:
-                if target_col and target_col in df.columns:
-                    means = df.groupby(col)[target_col].transform("mean")
-                    df[col] = means
-    elif op == "scale":
-        method = params.get("method", "standard")
-        scaler = {"standard": StandardScaler, "minmax": MinMaxScaler, "robust": RobustScaler}[method]()
-        df[columns] = scaler.fit_transform(df[columns])
     elif op == "bin":
         n_bins = params.get("n_bins", 5)
         for col in columns:
@@ -172,17 +162,41 @@ def _apply_builtin_step(df: pd.DataFrame, op: str, columns: list[str], params: d
     return df
 
 
+def _is_training_time_step(step: dict[str, Any]) -> bool:
+    """Statistical steps whose fitted parameters (means, scale factors,
+    category-target means) must come from the training fold only — applying
+    them to the full dataset before the split leaks test-fold statistics,
+    and full-dataset target encoding leaks each row's own label. These are
+    deferred into the training job's pipeline (src/training/dispatch.py).
+    Stateless/structural ops (drop, datetime_decompose, onehot/ordinal
+    encode, most_frequent/constant impute, bin, custom_code) still run here
+    so their plan ordering relative to each other is preserved."""
+    op, params = step.get("op"), step.get("params", {})
+    if op == "scale":
+        return True
+    if op == "impute" and params.get("strategy", "mean") in ("mean", "median"):
+        return True
+    if op == "encode" and params.get("method") == "target":
+        return True
+    return False
+
+
 def apply_feature_plan_node(state: PipelineState) -> PipelineState:
-    """Applies the validated FeaturePlan. Structured ops run inline; any
+    """Applies the validated FeaturePlan's stateless/structural ops; any
     custom_code step is dry-run in the sandbox first, then run on the full
-    dataset only after the dry-run succeeds (CLAUDE.md rule #6). Output
-    schema is checked afterward (PRD FR-17) before advancing."""
+    dataset only after the dry-run succeeds (CLAUDE.md rule #6). Statistical
+    steps are deferred to the training job (see _is_training_time_step).
+    Output schema is checked afterward (PRD FR-17) before advancing."""
     df = pd.read_csv(state["dataset_path"])
     plan = state.get("feature_plan", {})
     retry_count = dict(state.get("retry_count", {}))
+    deferred_steps: list[dict[str, Any]] = []
 
     try:
         for step in plan.get("steps", []):
+            if _is_training_time_step(step):
+                deferred_steps.append(step)
+                continue
             op, columns, params = step["op"], step.get("columns", []), step.get("params", {})
             if op == "custom_code":
                 code = step["code"]
@@ -210,6 +224,7 @@ def apply_feature_plan_node(state: PipelineState) -> PipelineState:
     out_path = TRANSFORMED_DIR / f"{state['run_id']}.csv"
     df.to_csv(out_path, index=False)
     state["transformed_dataset_path"] = str(out_path)
+    state["training_preprocess_steps"] = deferred_steps
     state["feature_plan_valid"] = True
     return state
 
@@ -218,6 +233,7 @@ def dispatch_training_node(state: PipelineState) -> PipelineState:
     task_spec = state.get("task_spec", {})
     cv_enabled = state.get("cv_enabled", True)
     cv_folds = state.get("cv_folds", 5)
+    tuning_enabled = state.get("tuning_enabled", True)
     resampling_plan = state.get("resampling_plan") or {"enabled": False, "method": "none"}
     run_ids = []
     for candidate in state.get("candidate_models", []):
@@ -230,8 +246,12 @@ def dispatch_training_node(state: PipelineState) -> PipelineState:
                 "dataset_path": state["transformed_dataset_path"],
                 "target_column": task_spec["target_column"],
                 "task_type": task_spec["task_type"],
+                "time_column": task_spec.get("time_column"),
+                "preprocess_steps": state.get("training_preprocess_steps", []),
                 "cv_enabled": cv_enabled,
                 "cv_folds": cv_folds,
+                "tuning_enabled": tuning_enabled,
+                "tuning_metric": task_spec.get("metric"),
                 "resampling_enabled": resampling_plan.get("enabled", False),
                 "resampling_method": resampling_plan.get("method", "none"),
             }

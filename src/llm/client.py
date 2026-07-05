@@ -84,6 +84,7 @@ def _mock_response(node: str, system_prompt: str) -> Any:
             "task_type": None,
             "target_column": None,
             "metric": None,
+            "time_column": None,
             "constraints": [],
             "is_ambiguous": True,
             "ambiguity_reason": "Mock LLM mode is active (AUTOML_MOCK_LLM=1); please confirm the task details.",
@@ -137,7 +138,8 @@ def _mock_response(node: str, system_prompt: str) -> Any:
             "MOCK-MODE REPORT (AUTOML_MOCK_LLM=1 — no real LLM was called).\n\n"
             "The pipeline profiled your data, applied the confirmed task specification, "
             "checked for target leakage, trained the candidate models listed in the results "
-            "table, and selected the best one by your chosen metric.\n\n"
+            "table (with hyperparameter tuning where enabled), and selected the best one by "
+            "your chosen metric.\n\n"
             "Caveats: target-leakage detection is heuristic and may miss cases. "
             "Unset AUTOML_MOCK_LLM and configure a provider in config/models.yaml "
             "to get a real plain-language rationale here."
