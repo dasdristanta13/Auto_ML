@@ -144,9 +144,22 @@ def _profile_columns(state: PipelineState) -> list[dict[str, Any]]:
             "null_rate": info.get("null_rate"),
             "n_unique": info.get("n_unique"),
             "is_pii": info.get("is_pii", False),
+            # aggregate counts only (already PII-redacted upstream) — feeds
+            # the class-distribution panel for the confirmed target column
+            "top_values": info.get("top_values"),
         }
         for name, info in columns.items()
     ]
+
+
+def _best_score(entry: dict[str, Any]) -> float | None:
+    """Best model's score on the run's own success metric, for the run list."""
+    state = entry["state"]
+    metric = (state.get("task_spec") or {}).get("metric")
+    metrics = (state.get("best_model") or {}).get("metrics") or {}
+    if metric and metric in metrics:
+        return round(float(metrics[metric]), 4)
+    return None
 
 
 _STAGE_MESSAGES = {
@@ -308,6 +321,8 @@ def list_runs() -> list[dict[str, Any]]:
                 "status": entry["status"],
                 "created_at": entry["created_at"],
                 "description": entry["state"].get("use_case_description"),
+                "best_score": _best_score(entry),
+                "metric": (entry["state"].get("task_spec") or {}).get("metric"),
             }
             for run_id, entry in sorted(_runs.items(), key=lambda kv: -kv[1]["created_at"])
         ]
