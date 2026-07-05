@@ -93,3 +93,45 @@ def test_demo_credentials_endpoint_has_defaults_when_env_unset(client, monkeypat
     res = client.get("/api/auth/demo-credentials")
 
     assert res.json() == {"email": "demo@automl.local", "password": "demo123"}
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("GET", "/api/runs"),
+        ("GET", "/api/runs/nonexistent"),
+        ("POST", "/api/runs/nonexistent/confirm"),
+        ("POST", "/api/runs/nonexistent/approve-features"),
+        ("POST", "/api/runs/nonexistent/cancel"),
+        ("GET", "/api/runs/nonexistent/model"),
+        ("GET", "/api/runs/nonexistent/script"),
+        ("GET", "/api/runs/nonexistent/model/schema"),
+        ("POST", "/api/runs/nonexistent/predict"),
+        ("GET", "/api/runs/nonexistent/trace"),
+        ("POST", "/api/runs/nonexistent/chat"),
+    ],
+)
+def test_protected_endpoints_401_without_a_session(client, method, path):
+    res = client.request(method, path, json={} if method == "POST" else None)
+
+    assert res.status_code == 401
+
+
+def test_protected_endpoint_200s_with_a_valid_session(client):
+    client.post("/api/auth/login", json={"email": "demo@automl.local", "password": "demo123"})
+
+    res = client.get("/api/runs")
+
+    assert res.status_code == 200
+
+
+def test_create_run_401s_without_a_session(client):
+    import io
+
+    res = client.post(
+        "/api/runs",
+        files={"file": ("data.csv", io.BytesIO(b"a,b\n1,2\n"), "text/csv")},
+        data={"description": "predict a"},
+    )
+
+    assert res.status_code == 401

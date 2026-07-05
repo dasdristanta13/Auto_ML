@@ -403,7 +403,9 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
 
 
 @app.post("/api/runs")
-async def create_run(file: UploadFile = File(...), description: str = Form(...)) -> dict[str, Any]:
+async def create_run(
+    file: UploadFile = File(...), description: str = Form(...), _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
     if not (file.filename or "").lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="only .csv uploads are supported in this local build")
 
@@ -430,7 +432,7 @@ async def create_run(file: UploadFile = File(...), description: str = Form(...))
 
 
 @app.get("/api/runs")
-def list_runs() -> list[dict[str, Any]]:
+def list_runs(_session: dict[str, Any] = Depends(require_session)) -> list[dict[str, Any]]:
     with _lock:
         return [
             {
@@ -447,14 +449,16 @@ def list_runs() -> list[dict[str, Any]]:
 
 
 @app.get("/api/runs/{run_id}")
-def get_run(run_id: str) -> dict[str, Any]:
+def get_run(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> dict[str, Any]:
     entry = _get_entry(run_id)
     with _lock:
         return _run_summary(run_id, entry)
 
 
 @app.post("/api/runs/{run_id}/confirm")
-def confirm_run(run_id: str, body: ConfirmRequest) -> dict[str, Any]:
+def confirm_run(
+    run_id: str, body: ConfirmRequest, _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
     entry = _get_entry(run_id)
     with _lock:
         if entry["status"] != "awaiting_confirmation":
@@ -519,7 +523,9 @@ _VALID_RESAMPLING_METHODS = {"none", "smote", "random_oversample", "random_under
 
 
 @app.post("/api/runs/{run_id}/approve-features")
-def approve_features(run_id: str, body: FeatureApprovalRequest) -> dict[str, Any]:
+def approve_features(
+    run_id: str, body: FeatureApprovalRequest, _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
     entry = _get_entry(run_id)
     with _lock:
         if entry["status"] != "awaiting_feature_approval":
@@ -547,7 +553,7 @@ def approve_features(run_id: str, body: FeatureApprovalRequest) -> dict[str, Any
 
 
 @app.post("/api/runs/{run_id}/cancel")
-def cancel_run(run_id: str) -> dict[str, Any]:
+def cancel_run(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> dict[str, Any]:
     """Best-effort cancellation (PRODUCT.md 3.3: 'always show a way to cancel
     a running pipeline'). Takes effect between graph steps — an in-flight
     node/training job already running is not interrupted mid-execution, but
@@ -571,14 +577,14 @@ def _require_model_path(entry: dict[str, Any]) -> str:
 
 
 @app.get("/api/runs/{run_id}/model")
-def download_model(run_id: str):
+def download_model(run_id: str, _session: dict[str, Any] = Depends(require_session)):
     entry = _get_entry(run_id)
     model_path = _require_model_path(entry)
     return FileResponse(model_path, filename=f"automl_{run_id}.joblib", media_type="application/octet-stream")
 
 
 @app.get("/api/runs/{run_id}/script")
-def download_script(run_id: str) -> Response:
+def download_script(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> Response:
     """Standalone Python script reproducing this run's feature engineering +
     training (PRODUCT.md 3.4 'export pipeline as code'; PRD 2.3 step 6)."""
     entry = _get_entry(run_id)
@@ -593,7 +599,7 @@ def download_script(run_id: str) -> Response:
 
 
 @app.get("/api/runs/{run_id}/model/schema")
-def get_model_schema(run_id: str) -> dict[str, Any]:
+def get_model_schema(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> dict[str, Any]:
     """Feature columns + task info the frontend's 'test the model' tab needs
     to build an input form without hardcoding anything."""
     entry = _get_entry(run_id)
@@ -620,7 +626,9 @@ class PredictRequest(BaseModel):
 
 
 @app.post("/api/runs/{run_id}/predict")
-def predict(run_id: str, body: PredictRequest) -> dict[str, Any]:
+def predict(
+    run_id: str, body: PredictRequest, _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
     """Score one user-supplied row against the winning model — the
     'ready-made deployment to test the model' PRODUCT.md 3.4/3.5 gestures at,
     scoped to local interactive testing rather than a hosted endpoint."""
@@ -634,7 +642,7 @@ def predict(run_id: str, body: PredictRequest) -> dict[str, Any]:
 
 
 @app.get("/api/runs/{run_id}/trace")
-def get_trace(run_id: str) -> list[dict[str, Any]]:
+def get_trace(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> list[dict[str, Any]]:
     _get_entry(run_id)
     return _json_safe(read_trace(run_id))
 
@@ -644,7 +652,7 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/api/runs/{run_id}/chat")
-def chat(run_id: str, body: ChatRequest) -> dict[str, Any]:
+def chat(run_id: str, body: ChatRequest, _session: dict[str, Any] = Depends(require_session)) -> dict[str, Any]:
     """Answer a question about this run's already-computed results (see
     docs/superpowers/specs/2026-07-05-ai-assistant-chat-design.md). Only
     available once the report is ready — gated here, not just in the UI, so
