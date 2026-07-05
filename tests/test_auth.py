@@ -135,3 +135,19 @@ def test_create_run_401s_without_a_session(client):
     )
 
     assert res.status_code == 401
+
+
+def test_root_redirects_to_login_without_a_session(client):
+    res = client.get("/", follow_redirects=False)
+
+    assert res.status_code == 307
+    assert res.headers["location"] == "/login.html"
+
+
+def test_root_serves_the_app_with_a_valid_session(client):
+    client.post("/api/auth/login", json={"email": "demo@automl.local", "password": "demo123"})
+
+    res = client.get("/", follow_redirects=False)
+
+    assert res.status_code == 200
+    assert "Agentic AutoML" in res.text

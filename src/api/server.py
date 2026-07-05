@@ -688,5 +688,16 @@ class NoCacheStaticFiles(StaticFiles):
         return response
 
 
+@app.get("/")
+def serve_index(request: Request):
+    """The one static path that needs server-side auth enforcement — every
+    other static asset (styles.css, app.js, login.html/login.js) stays
+    reachable unauthenticated via the mount below, but the app shell itself
+    should redirect to the login page rather than flash stale/empty UI."""
+    if _get_session_from_request(request) is None:
+        return RedirectResponse("/login.html")
+    return FileResponse("frontend/index.html")
+
+
 # Serve the frontend last so /api/* wins routing.
 app.mount("/", NoCacheStaticFiles(directory="frontend", html=True), name="frontend")
