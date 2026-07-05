@@ -12,6 +12,7 @@ Redis-backed result store in production without touching agents/graph code.
 
 from __future__ import annotations
 
+import inspect
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -65,12 +66,16 @@ def _get_executor() -> ThreadPoolExecutor:
     return _executor
 
 
-def _build_estimator(library: str, estimator: str, hyperparams: dict[str, Any]):
+def _estimator_registry(library: str) -> dict[str, type]:
+    """Single source of truth for valid estimator names per library — used
+    by both training dispatch and model_selection_node's pre-dispatch
+    validation. Lazily imports each library so an uninstalled optional
+    dependency (xgboost/lightgbm) only fails when actually requested."""
     if library == "sklearn":
         import sklearn.ensemble as ens
         import sklearn.linear_model as lm
 
-        registry = {
+        return {
             "LogisticRegression": lm.LogisticRegression,
             "LinearRegression": lm.LinearRegression,
             "Ridge": lm.Ridge,
@@ -79,20 +84,70 @@ def _build_estimator(library: str, estimator: str, hyperparams: dict[str, Any]):
             "GradientBoostingClassifier": ens.GradientBoostingClassifier,
             "GradientBoostingRegressor": ens.GradientBoostingRegressor,
         }
-    elif library == "xgboost":
+    if library == "xgboost":
         import xgboost as xgb
 
-        registry = {"XGBClassifier": xgb.XGBClassifier, "XGBRegressor": xgb.XGBRegressor}
-    elif library == "lightgbm":
+        return {"XGBClassifier": xgb.XGBClassifier, "XGBRegressor": xgb.XGBRegressor}
+    if library == "lightgbm":
         import lightgbm as lgb
 
-        registry = {"LGBMClassifier": lgb.LGBMClassifier, "LGBMRegressor": lgb.LGBMRegressor}
-    else:
-        raise ValueError(f"unknown library '{library}'")
+        return {"LGBMClassifier": lgb.LGBMClassifier, "LGBMRegressor": lgb.LGBMRegressor}
+    raise ValueError(f"unknown library '{library}'")
 
+
+def known_estimators(library: str) -> set[str]:
+    """Best-effort: returns an empty set if the library isn't installed in
+    this environment, rather than raising. model_selection_node uses this to
+    validate LLM-proposed estimator names before a candidate ever reaches
+    dispatch — only called for libraries _library_available() already
+    confirmed importable, so ImportError here is a defensive fallback, not
+    the expected path."""
+    try:
+        return set(_estimator_registry(library))
+    except (ImportError, ValueError):
+        return set()
+
+
+_DEPRECATED_HYPERPARAM_VALUES: dict[str, dict[Any, dict[str, Any]]] = {
+    # param_name -> {llm_supplied_value: {"classifier": replacement, "regressor": replacement}}
+    "max_features": {"auto": {"classifier": "sqrt", "regressor": None}},
+}
+
+
+def _sanitize_hyperparams(estimator_cls: type, hyperparams: dict[str, Any]) -> dict[str, Any]:
+    """Defense-in-depth for CandidateModel.hyperparams (src/state.py), an
+    untyped dict[str, Any] the LLM controls with no schema/enum validating
+    individual names or values. Two independent protections:
+    1. Drop any key estimator_cls.__init__ doesn't accept, via signature
+       introspection, instead of a typo'd/hallucinated name crashing
+       construction with TypeError. Skipped when __init__ declares
+       **kwargs (some XGBoost/LightGBM versions accept arbitrary extra
+       keys), since nothing can be validated against an open signature.
+    2. Translate known deprecated/renamed values (e.g. sklearn's
+       max_features="auto", removed in 1.3) to their modern equivalent.
+    """
+    sanitized = dict(hyperparams)
+    params = inspect.signature(estimator_cls.__init__).parameters
+    accepts_arbitrary_kwargs = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+    if not accepts_arbitrary_kwargs:
+        valid_names = set(params) - {"self"}
+        sanitized = {k: v for k, v in sanitized.items() if k in valid_names}
+
+    kind = "classifier" if estimator_cls.__name__.endswith("Classifier") else "regressor"
+    for param, value_map in _DEPRECATED_HYPERPARAM_VALUES.items():
+        if param in sanitized and sanitized[param] in value_map:
+            sanitized[param] = value_map[sanitized[param]][kind]
+
+    return sanitized
+
+
+def _build_estimator(library: str, estimator: str, hyperparams: dict[str, Any]):
+    registry = _estimator_registry(library)
     if estimator not in registry:
         raise ValueError(f"unknown estimator '{estimator}' for library '{library}'")
-    return registry[estimator](**hyperparams)
+    estimator_cls = registry[estimator]
+    hyperparams = _sanitize_hyperparams(estimator_cls, hyperparams)
+    return estimator_cls(**hyperparams)
 
 
 def _split(
