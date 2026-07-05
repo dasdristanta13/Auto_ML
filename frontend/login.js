@@ -9,6 +9,7 @@ function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   localStorage.setItem("automl-theme", theme);
   const isDark = theme === "dark";
+  $("theme-label").textContent = isDark ? "Light mode" : "Dark mode";
   document.querySelector(".icon-moon").classList.toggle("hidden", isDark);
   document.querySelector(".icon-sun").classList.toggle("hidden", !isDark);
   $("theme-toggle").setAttribute("aria-pressed", String(isDark));
