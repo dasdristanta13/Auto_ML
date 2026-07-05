@@ -160,6 +160,9 @@
       <!-- stat cards -->
       <section class="stat-row" id="stat-cards"></section>
 
+      <div class="run-layout">
+      <div class="run-main">
+
       <!-- live pipeline -->
       <section class="card">
         <div class="card-head">
@@ -296,6 +299,24 @@
           <div class="chips" id="dataset-chips"></div>
         </div>
 
+        <div class="card hidden" id="classdist-card">
+          <div class="card-head"><h3>Class distribution</h3><span class="muted small" id="classdist-sub"></span></div>
+          <div class="donut-wrap">
+            <svg id="classdist-donut" viewBox="0 0 120 120" role="img" aria-label="Target class distribution"></svg>
+            <div class="donut-center" id="classdist-center"></div>
+            <ul class="donut-legend" id="classdist-legend"></ul>
+          </div>
+          <div class="chips" id="classdist-chips"></div>
+        </div>
+
+        <div class="card hidden" id="quality-card">
+          <div class="card-head"><h3>Data quality overview</h3><span class="muted small" id="quality-sub"></span></div>
+          <div class="quality-wrap">
+            <div class="quality-ring" id="quality-ring"></div>
+            <div class="quality-bars" id="quality-bars"></div>
+          </div>
+        </div>
+
         <div class="card hidden" id="results-card">
           <div class="card-head">
             <h3>Model comparison</h3>
@@ -322,10 +343,6 @@
           <div class="fi-list" id="fi-list"></div>
         </div>
 
-        <div class="card hidden" id="activity-card">
-          <div class="card-head"><h3>Recent activity</h3></div>
-          <ul class="activity-list" id="activity-list"></ul>
-        </div>
       </section>
 
       <!-- report + try-the-model, tabbed -->
@@ -373,6 +390,32 @@
         <h3>Issues encountered</h3>
         <ul class="callout-list" id="error-list"></ul>
       </div>
+
+      </div><!-- /run-main -->
+
+      <aside class="run-rail">
+        <div class="card assistant-card" id="assistant-card">
+          <div class="card-head">
+            <h3><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9Z"/></svg> AI Assistant</h3>
+          </div>
+          <p class="muted small" id="chat-placeholder">Available once your model is trained.</p>
+          <div class="chat-thread hidden" id="chat-thread"></div>
+          <div class="chat-suggestions hidden" id="chat-suggestions"></div>
+          <form id="chat-form" class="chat-form hidden">
+            <input type="text" id="chat-input" placeholder="Ask about this run…" autocomplete="off" />
+            <button type="submit" class="btn primary" id="chat-send-btn" aria-label="Send question">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-11 11"/><path d="M22 2 15 22l-4-9-9-4 20-7Z"/></svg>
+            </button>
+          </form>
+          <p class="chat-error hidden" id="chat-error" role="alert"></p>
+        </div>
+
+        <div class="card hidden" id="activity-card">
+          <div class="card-head"><h3>Recent activity</h3></div>
+          <ul class="activity-list" id="activity-list"></ul>
+        </div>
+      </aside>
+      </div><!-- /run-layout -->
     </main>
   </div>
 </div>

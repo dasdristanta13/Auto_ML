@@ -70,7 +70,10 @@ function applyTheme(theme) {
   document.querySelector(".icon-moon").classList.toggle("hidden", isDark);
   document.querySelector(".icon-sun").classList.toggle("hidden", !isDark);
   $("theme-toggle").setAttribute("aria-pressed", String(isDark));
-  if (lastRun) renderDatasetSummary(lastRun); // re-tint donut for the new surface
+  if (lastRun) {
+    renderDatasetSummary(lastRun); // re-tint donuts for the new surface
+    renderClassDistribution(lastRun);
+  }
 }
 $("theme-toggle").addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
@@ -377,6 +380,8 @@ function render(run) {
   renderLeakage(run);
   renderFeatureApproval(run);
   renderDatasetSummary(run);
+  renderClassDistribution(run);
+  renderQuality(run);
   renderInsights(run);
   renderResults(run);
   renderTuningTrend(run);
@@ -426,6 +431,14 @@ function renderStatCards(run) {
       sub: "fully trace-logged",
     },
   ];
+  const quality = summary.quality;
+  if (quality) {
+    cards.push({
+      icon: "shield", tint: "green", label: "Data quality",
+      value: `${Math.round(quality.overall * 100)}%`,
+      sub: "overall score",
+    });
+  }
   const insights = run.insights || [];
   if (insights.length) {
     cards.push({
@@ -818,6 +831,95 @@ function renderDatasetSummary(run) {
     <span class="chip detected">${ICONS.check} worst null rate: ${(worstNull * 100).toFixed(1)}%</span>
     ${targetCol ? `<span class="chip detected">${ICONS.check} target: <span class="mono">${escapeHtml(targetCol)}</span></span>` : ""}
     ${piiCount ? `<span class="chip flagged" title="Redacted from every AI-facing step">${ICONS.warning} ${piiCount} PII column(s)</span>` : ""}`;
+}
+
+/* ================= class distribution (classification targets) ================= */
+
+function renderClassDistribution(run) {
+  const card = $("classdist-card");
+  const spec = run.task_spec || {};
+  const confirmed = (run.stages_done || []).includes("confirm");
+  const target = (run.profile_columns || []).find((c) => c.name === spec.target_column);
+  const entries = target && target.top_values ? Object.entries(target.top_values).sort((a, b) => b[1] - a[1]) : [];
+  if (spec.task_type !== "classification" || !confirmed || entries.length < 2) {
+    card.classList.add("hidden");
+    return;
+  }
+  card.classList.remove("hidden");
+  $("classdist-sub").textContent = `target: ${spec.target_column}`;
+
+  const total = entries.reduce((acc, [, n]) => acc + n, 0);
+  const styles = getComputedStyle(document.documentElement);
+  const palette = DONUT_KEYS.map((k) => styles.getPropertyValue(k).trim());
+  const R = 44, C = 2 * Math.PI * R;
+  const gapPx = entries.length > 1 ? 3 : 0;
+  let offset = 0;
+  let svg = "";
+  entries.forEach(([, count], i) => {
+    const frac = count / total;
+    const len = Math.max(frac * C - gapPx, 1);
+    svg += `<circle cx="60" cy="60" r="${R}" fill="none" stroke="${palette[i % palette.length]}"
+      stroke-width="14" stroke-linecap="butt"
+      stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-offset}"
+      transform="rotate(-90 60 60)"/>`;
+    offset += frac * C;
+  });
+  $("classdist-donut").innerHTML = svg;
+  $("classdist-center").innerHTML = `${entries.length}<small>classes</small>`;
+
+  $("classdist-legend").innerHTML = entries
+    .map(
+      ([label, count], i) => `
+      <li><span class="swatch" style="background:${palette[i % palette.length]}"></span>
+      ${escapeHtml(label)}<span class="count">${count.toLocaleString()} (${((count / total) * 100).toFixed(1)}%)</span></li>`
+    )
+    .join("");
+
+  const covered = target.n_unique <= entries.length; // top_values holds every class
+  const majority = entries[0][1];
+  const minority = entries[entries.length - 1][1];
+  const ratio = covered && minority > 0 ? majority / minority : null;
+  const plan = run.resampling_plan || {};
+  $("classdist-chips").innerHTML = `
+    ${ratio != null ? `<span class="chip ${ratio >= 3 ? "flagged" : "detected"}">${ratio >= 3 ? ICONS.warning : ICONS.check} imbalance ratio ${ratio.toFixed(1)} : 1</span>` : ""}
+    ${!covered ? `<span class="chip detected">top ${entries.length} of ${target.n_unique} classes shown</span>` : ""}
+    ${plan.enabled ? `<span class="chip detected">${ICONS.check} ${escapeHtml(String(plan.method || "").replaceAll("_", " "))} applied during training</span>` : ""}`;
+}
+
+/* ================= data quality overview ================= */
+
+function renderQuality(run) {
+  const quality = (run.profile_summary || {}).quality;
+  const card = $("quality-card");
+  if (!quality) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+
+  const overallPct = Math.round(quality.overall * 100);
+  $("quality-sub").textContent = `${quality.duplicate_row_count.toLocaleString()} duplicate row(s)`;
+
+  const R = 34, C = 2 * Math.PI * R;
+  $("quality-ring").innerHTML = `
+    <svg viewBox="0 0 80 80" role="img" aria-label="Overall data quality ${overallPct}%">
+      <circle cx="40" cy="40" r="${R}" fill="none" stroke="var(--border-subtle)" stroke-width="8"/>
+      <circle cx="40" cy="40" r="${R}" fill="none" stroke="var(--accent-success)" stroke-width="8" stroke-linecap="round"
+        stroke-dasharray="${((overallPct / 100) * C).toFixed(2)} ${C.toFixed(2)}" transform="rotate(-90 40 40)"/>
+    </svg>
+    <div class="quality-ring-label"><strong>${overallPct}%</strong><small>overall</small></div>`;
+
+  const dims = [
+    { label: "Completeness", value: quality.completeness, hint: "share of cells that are not null" },
+    { label: "Uniqueness", value: quality.uniqueness, hint: "share of rows that are not exact duplicates" },
+  ];
+  $("quality-bars").innerHTML = dims
+    .map(
+      (d) => `
+      <div class="quality-row" title="${d.hint}">
+        <span class="quality-name">${d.label}</span>
+        <span class="fi-track"><span class="fi-fill quality-fill" style="width:${(d.value * 100).toFixed(1)}%"></span></span>
+        <span class="quality-value mono">${Math.round(d.value * 100)}%</span>
+      </div>`
+    )
+    .join("");
 }
 
 /* ================= results table ================= */
