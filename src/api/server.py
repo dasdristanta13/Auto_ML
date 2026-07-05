@@ -36,7 +36,8 @@ from pydantic import BaseModel
 
 from src.export.script_export import generate_training_script
 from src.graph.build_graph import build_intake_graph, build_prep_graph, build_train_graph
-from src.insights.auto_insights import generate_insights
+from src.agents.chat_node import answer_chat_question
+from src.insights.auto_insights import generate_insights, suggested_questions
 from src.llm.tracing import read_trace
 from src.state import PipelineState, new_state
 from src.training.dispatch import load_model_schema, predict_one
@@ -228,6 +229,39 @@ def _plain_language_events(state: PipelineState, stages_done: list[str]) -> list
     return events
 
 
+def _chat_context(state: PipelineState) -> dict[str, Any]:
+    """Trimmed subset of _run_summary's already-redacted, already-computed
+    fields for the chat prompt — skips event timelines/stage messages to
+    keep the prompt compact (see the chat design spec)."""
+    feature_plan = state.get("feature_plan") or {}
+    return _json_safe(
+        {
+            "task_spec": state.get("task_spec"),
+            "profile_summary": {
+                "row_count": state.get("profile", {}).get("row_count"),
+                "column_count": state.get("profile", {}).get("column_count"),
+            },
+            "eda_insights": (state.get("eda_report") or {}).get("insights", []),
+            "leakage_flags": state.get("leakage_flags", []),
+            "feature_plan_steps": [
+                {"op": s.get("op"), "columns": s.get("columns"), "rationale": s.get("rationale")}
+                for s in feature_plan.get("steps", [])
+            ],
+            "training_results": [
+                {
+                    "candidate_name": r.get("candidate_name"),
+                    "status": r.get("status"),
+                    "metrics": r.get("metrics"),
+                    "tuning": r.get("tuning"),
+                }
+                for r in state.get("training_results", [])
+            ],
+            "best_model": state.get("best_model"),
+            "report_narrative": (state.get("report") or {}).get("narrative"),
+        }
+    )
+
+
 def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
     state = entry["state"]
     stages_done: list[str] = []
@@ -243,6 +277,8 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
     events = _plain_language_events(state, stages_done)
     for event in events:
         event["timestamp"] = completed_at_by_node.get(event["stage"])
+
+    insights = generate_insights(state, stages_done)
 
     return _json_safe(
         {
@@ -279,9 +315,13 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
             "feature_plan": state.get("feature_plan"),
             "training_results": state.get("training_results", []),
             "best_model": state.get("best_model"),
-            "insights": generate_insights(state, stages_done),
+            "insights": insights,
             "report": state.get("report", {}).get("narrative"),
             "errors": state.get("errors", []),
+            "chat_history": entry.get("chat_history", []),
+            "suggested_questions": suggested_questions(
+                insights, state.get("task_spec") or {}, state.get("best_model") or {}
+            ),
         }
     )
 
@@ -306,6 +346,7 @@ async def create_run(file: UploadFile = File(...), description: str = Form(...))
             "created_at": time.time(),
             "finished_at": None,
             "cancel_requested": False,
+            "chat_history": [],
         }
 
     threading.Thread(target=_run_intake, args=(run_id,), daemon=True).start()
@@ -506,6 +547,34 @@ def predict(run_id: str, body: PredictRequest) -> dict[str, Any]:
 def get_trace(run_id: str) -> list[dict[str, Any]]:
     _get_entry(run_id)
     return _json_safe(read_trace(run_id))
+
+
+class ChatRequest(BaseModel):
+    question: str
+
+
+@app.post("/api/runs/{run_id}/chat")
+def chat(run_id: str, body: ChatRequest) -> dict[str, Any]:
+    """Answer a question about this run's already-computed results (see
+    docs/superpowers/specs/2026-07-05-ai-assistant-chat-design.md). Only
+    available once the report is ready — gated here, not just in the UI, so
+    the contract holds regardless of client."""
+    entry = _get_entry(run_id)
+    with _lock:
+        if entry["status"] not in ("completed", "failed"):
+            raise HTTPException(status_code=409, detail=f"run is '{entry['status']}', not ready for questions yet")
+        state = entry["state"]
+        context = _chat_context(state)
+        history_for_prompt = [{"role": h["role"], "content": h["content"]} for h in entry["chat_history"]]
+
+    answer = answer_chat_question(run_id=run_id, context=context, history=history_for_prompt, question=body.question)
+
+    with _lock:
+        now = time.time()
+        entry["chat_history"].append({"role": "user", "content": body.question, "timestamp": now})
+        entry["chat_history"].append({"role": "assistant", "content": answer, "timestamp": now})
+
+    return {"answer": answer}
 
 
 class NoCacheStaticFiles(StaticFiles):
