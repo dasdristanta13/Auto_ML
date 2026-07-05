@@ -121,12 +121,17 @@ function showRunView() {
 
 async function loadRecentRuns() {
   const box = $("nav-runs");
+  let runs = [];
   try {
-    const runs = await (await fetch("/api/runs")).json();
-    if (!runs.length) {
-      box.innerHTML = `<span class="nav-runs-empty">No runs yet</span>`;
-      return;
-    }
+    runs = await (await fetch("/api/runs")).json();
+  } catch {
+    box.innerHTML = `<span class="nav-runs-empty">No runs yet</span>`;
+    renderHome([]);
+    return;
+  }
+  if (!runs.length) {
+    box.innerHTML = `<span class="nav-runs-empty">No runs yet</span>`;
+  } else {
     box.innerHTML = "";
     for (const run of runs.slice(0, 6)) {
       const el = document.createElement("button");
@@ -137,9 +142,97 @@ async function loadRecentRuns() {
       el.onclick = () => openRun(run.run_id);
       box.appendChild(el);
     }
-  } catch {
-    box.innerHTML = `<span class="nav-runs-empty">No runs yet</span>`;
   }
+  renderHome(runs);
+}
+
+/* ================= home view ================= */
+
+const ACTIVE_STATUSES = ["profiling", "running", "awaiting_confirmation", "awaiting_feature_approval"];
+/* cross-run "best" is only meaningful for higher-is-better metrics */
+const HIGHER_IS_BETTER = new Set(["f1", "accuracy", "roc_auc", "r2"]);
+let homePipelineRunId = null;
+
+function renderHome(runs) {
+  const active = runs.filter((r) => ACTIVE_STATUSES.includes(r.status));
+  let bestRun = null;
+  for (const r of runs) {
+    if (r.status !== "completed" || r.best_score == null || !HIGHER_IS_BETTER.has(r.metric)) continue;
+    if (!bestRun || r.best_score > bestRun.best_score) bestRun = r;
+  }
+
+  const statsBox = $("home-stats");
+  statsBox.classList.toggle("hidden", !runs.length);
+  if (runs.length) {
+    statsBox.innerHTML = `
+      <div class="home-stat"><div class="home-stat-value">${runs.length}</div><div class="home-stat-label">Total experiments</div></div>
+      <div class="home-stat"><div class="home-stat-value">${bestRun ? bestRun.best_score.toFixed(3) : "—"}</div><div class="home-stat-label">${bestRun ? `Best ${escapeHtml(bestRun.metric)} score` : "Best score"}</div></div>
+      <div class="home-stat"><div class="home-stat-value">${active.length}</div><div class="home-stat-label">Active run${active.length === 1 ? "" : "s"}</div></div>`;
+  }
+
+  $("home-band").classList.toggle("hidden", !runs.length);
+  if (runs.length) {
+    $("home-projects-list").innerHTML = runs
+      .slice(0, 5)
+      .map(
+        (r) => `
+      <button type="button" class="home-project" data-run-id="${r.run_id}">
+        <span class="home-project-main">
+          <span class="home-project-name">${escapeHtml(r.filename)}</span>
+          <span class="home-project-desc">${escapeHtml(r.description || "")}</span>
+        </span>
+        <span class="home-project-meta">
+          ${r.best_score != null ? `<span class="home-project-score mono">${escapeHtml(r.metric)}: ${r.best_score.toFixed(3)}</span>` : ""}
+          <span class="status-badge ${r.status}">${r.status.replaceAll("_", " ")}</span>
+          <span class="home-project-time">${relativeTime(r.created_at)}</span>
+        </span>
+      </button>`
+      )
+      .join("");
+    $("home-projects-list").querySelectorAll(".home-project").forEach((el) => {
+      el.addEventListener("click", () => openRun(el.dataset.runId));
+    });
+  }
+  renderHomePipeline(active[0] || null);
+}
+
+async function renderHomePipeline(activeRun) {
+  const card = $("home-pipeline");
+  if (!activeRun) {
+    card.classList.add("hidden");
+    homePipelineRunId = null;
+    return;
+  }
+  homePipelineRunId = activeRun.run_id;
+  let run;
+  try {
+    run = await (await fetch(`/api/runs/${activeRun.run_id}`)).json();
+  } catch {
+    return;
+  }
+  if (homePipelineRunId !== activeRun.run_id) return; // superseded by a newer refresh
+  card.classList.remove("hidden");
+  $("home-pipeline-sub").textContent = run.filename;
+
+  const done = new Set(run.stages_done || []);
+  const durations = {};
+  for (const rec of run.stage_timeline || []) durations[rec.node] = rec.duration_seconds;
+  let activeAssigned = false;
+  $("home-pipeline-rail").innerHTML = STAGES.map((stage) => {
+    const stageDone = stage.node === "poll_training" ? done.has("evaluate") : done.has(stage.node);
+    let cls = "pending";
+    if (stageDone) cls = "done";
+    else if (!activeAssigned) {
+      cls = "active";
+      activeAssigned = true;
+    }
+    const duration = durations[stage.node];
+    return `<li class="mini-stage ${cls}">
+      <span class="mini-stage-dot">${cls === "done" ? ICONS.check : ""}</span>
+      <span class="mini-stage-label">${stage.label}</span>
+      <span class="mini-stage-time mono">${cls === "done" && duration != null ? formatDuration(duration) : cls === "active" ? "running" : ""}</span>
+    </li>`;
+  }).join("");
 }
 
 /* ================= new run form ================= */
