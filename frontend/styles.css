@@ -684,3 +684,24 @@ select, textarea, input[type="text"], input[type="number"] {
 .quality-name { font-size: var(--text-xs); font-weight: 600; color: var(--text-secondary); }
 .quality-fill { background: var(--accent-success); }
 .quality-value { font-size: var(--text-xs); text-align: right; }
+
+/* ================= AI assistant panel ================= */
+
+.chat-thread { display: flex; flex-direction: column; gap: var(--sp-2); max-height: 340px; overflow-y: auto; margin-bottom: var(--sp-3); }
+.chat-msg { padding: 8px 12px; border-radius: var(--radius-sm); font-size: var(--text-sm); max-width: 88%; }
+.chat-msg p { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: break-word; }
+.chat-msg .chat-role { font-size: var(--text-xs); font-weight: 650; color: var(--text-secondary); }
+.chat-msg.chat-user { align-self: flex-end; background: var(--accent-primary-soft); color: var(--text-primary); }
+.chat-msg.chat-assistant { align-self: flex-start; background: var(--bg-surface-raised); border: 1px solid var(--border-subtle); }
+.chat-msg.chat-thinking p { color: var(--text-secondary); font-style: italic; }
+.chat-suggestions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.suggestion-chip {
+  font: inherit; font-size: var(--text-xs); font-weight: 650; padding: 4px 10px; border-radius: 999px;
+  background: var(--bg-surface-raised); color: var(--text-secondary); border: 1px solid var(--border-subtle);
+  cursor: pointer; transition: color 0.15s ease, border-color 0.15s ease; text-align: left;
+}
+.suggestion-chip:hover { color: var(--accent-primary); border-color: var(--accent-primary); }
+.chat-form { display: flex; gap: var(--sp-2); }
+.chat-form input[type="text"] { flex: 1; min-width: 0; font-size: var(--text-sm); }
+.chat-form .btn { padding: 9px 12px; flex-shrink: 0; }
+.chat-error { color: var(--accent-danger); font-size: var(--text-xs); margin-top: var(--sp-2); }

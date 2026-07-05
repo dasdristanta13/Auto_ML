@@ -327,6 +327,9 @@ function openRun(runId) {
   $("trace-body").textContent = "";
   predictFormLoadedFor = null;
   $("predict-result").classList.add("hidden");
+  chatPendingQuestion = null;
+  $("chat-input").value = "";
+  $("chat-error").classList.add("hidden");
   switchTab("report");
   stopPolling();
   poll();
@@ -388,6 +391,7 @@ function render(run) {
   renderFeatureImportance(run);
   renderActivity(run);
   renderReport(run);
+  renderChat(run);
   renderCaveats(run);
   renderErrors(run);
 }
@@ -1044,6 +1048,84 @@ function renderTuningTrend(run) {
     <li><span class="tt-chip tt-chip-score"></span>per-trial score</li>
     <li><span class="tt-chip tt-chip-best"></span>best so far</li>`;
 }
+
+/* ================= AI assistant panel ================= */
+
+let chatPendingQuestion = null;
+
+function renderChat(run) {
+  const ready = ["completed", "failed"].includes(run.status);
+  $("chat-placeholder").classList.toggle("hidden", ready);
+  $("chat-thread").classList.toggle("hidden", !ready);
+  $("chat-suggestions").classList.toggle("hidden", !ready);
+  $("chat-form").classList.toggle("hidden", !ready);
+  if (!ready) return;
+
+  const history = run.chat_history || [];
+  const bubbles = history.map(
+    (m) => `
+      <div class="chat-msg chat-${m.role}">
+        <span class="chat-role">${m.role === "user" ? "You" : "Assistant"}</span>
+        <p>${escapeHtml(m.content)}</p>
+      </div>`
+  );
+  if (chatPendingQuestion != null) {
+    bubbles.push(`
+      <div class="chat-msg chat-user">
+        <span class="chat-role">You</span>
+        <p>${escapeHtml(chatPendingQuestion)}</p>
+      </div>`);
+    bubbles.push(`
+      <div class="chat-msg chat-assistant chat-thinking">
+        <span class="chat-role">Assistant</span>
+        <p>Thinking…</p>
+      </div>`);
+  }
+  $("chat-thread").innerHTML = bubbles.length
+    ? bubbles.join("")
+    : `<p class="muted small">Ask anything about this run's data, decisions, or results.</p>`;
+  $("chat-thread").scrollTop = $("chat-thread").scrollHeight;
+
+  const suggestions = run.suggested_questions || [];
+  $("chat-suggestions").innerHTML = suggestions
+    .map((q) => `<button type="button" class="suggestion-chip">${escapeHtml(q)}</button>`)
+    .join("");
+  $("chat-suggestions").querySelectorAll(".suggestion-chip").forEach((chip, i) => {
+    chip.addEventListener("click", () => {
+      $("chat-input").value = suggestions[i];
+      $("chat-input").focus();
+    });
+  });
+}
+
+$("chat-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = $("chat-input");
+  const question = input.value.trim();
+  if (!question || !currentRunId || chatPendingQuestion != null) return;
+  input.value = "";
+  $("chat-error").classList.add("hidden");
+  chatPendingQuestion = question;
+  if (lastRun) renderChat(lastRun); // show the question + thinking bubble immediately
+  $("chat-send-btn").disabled = true;
+  try {
+    const res = await fetch(`/api/runs/${currentRunId}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    chatPendingQuestion = null;
+    await poll(); // re-fetch: chat_history now contains both messages
+  } catch (err) {
+    chatPendingQuestion = null;
+    if (lastRun) renderChat(lastRun);
+    $("chat-error").textContent = "Could not get an answer: " + err.message;
+    $("chat-error").classList.remove("hidden");
+  } finally {
+    $("chat-send-btn").disabled = false;
+  }
+});
 
 /* ================= feature importance ================= */
 
