@@ -38,6 +38,7 @@ from src.export.script_export import generate_training_script
 from src.graph.build_graph import build_intake_graph, build_prep_graph, build_train_graph
 from src.agents.chat_node import answer_chat_question
 from src.insights.auto_insights import generate_insights, suggested_questions
+from src.profiling.heuristics import target_too_high_cardinality_for_classification
 from src.llm.tracing import read_trace
 from src.state import PipelineState, new_state
 from src.training.dispatch import load_model_schema, predict_one
@@ -393,6 +394,20 @@ def confirm_run(run_id: str, body: ConfirmRequest) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail=f"'{time_column}' is not a column of this dataset")
         if time_column and time_column == body.target_column:
             raise HTTPException(status_code=400, detail="time_column cannot be the same as the target column")
+        if body.task_type == "classification":
+            target_info = columns.get(body.target_column, {})
+            row_count = state.get("profile", {}).get("row_count")
+            n_unique = target_info.get("n_unique")
+            if row_count and n_unique and target_too_high_cardinality_for_classification(n_unique, row_count):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"'{body.target_column}' has {n_unique} unique values across {row_count} rows — "
+                        "too high-cardinality to be a meaningful classification target (it looks like an "
+                        "identifier or free-text column rather than a category). Pick a different target "
+                        "column, or choose 'regression' if this is a continuous value."
+                    ),
+                )
         if body.cv_enabled and body.cv_folds < 2:
             raise HTTPException(status_code=400, detail="cv_folds must be at least 2 when cross-validation is enabled")
 
