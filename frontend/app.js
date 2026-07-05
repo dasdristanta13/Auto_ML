@@ -53,6 +53,37 @@ const METRICS = {
 const DONUT_KEYS = ["--cat-1", "--cat-2", "--cat-3", "--cat-4"];
 
 const $ = (id) => document.getElementById(id);
+
+/* Wraps every /api/runs* call: on a 401 (missing/expired session — see
+   docs/superpowers/specs/2026-07-05-login-page-design.md), redirect to the
+   login page instead of letting the caller's existing error handling show
+   a confusing "failed to..." message for what's actually a logged-out
+   session. Uses window.fetch explicitly so this definition is never itself
+   rewritten by the blanket fetch()->authFetch() replacement above it. */
+async function authFetch(url, options) {
+  const res = await window.fetch(url, options);
+  if (res.status === 401) {
+    window.location.href = "/login.html";
+    throw new Error("session expired — redirecting to login");
+  }
+  return res;
+}
+
+/* Fires immediately on script load; doesn't block the rest of this file's
+   synchronous setup below, but in practice the very first authFetch() call
+   (loadRecentRuns(), at the bottom of this file) will also redirect within
+   the same tick if the session turns out to be missing — this is a fast
+   UX path, not the security boundary (that's the server's 401s above). */
+(async function guardSession() {
+  try {
+    const res = await window.fetch("/api/auth/session");
+    const data = await res.json();
+    if (!data.authenticated) window.location.href = "/login.html";
+  } catch {
+    window.location.href = "/login.html";
+  }
+})();
+
 let pollTimer = null;
 let currentRunId = null;
 let currentRunStatus = null;
@@ -126,7 +157,7 @@ async function loadRecentRuns() {
   const box = $("nav-runs");
   let runs = [];
   try {
-    runs = await (await fetch("/api/runs")).json();
+    runs = await (await authFetch("/api/runs")).json();
   } catch {
     box.innerHTML = `<span class="nav-runs-empty">No runs yet</span>`;
     renderHome([]);
@@ -209,7 +240,7 @@ async function renderHomePipeline(activeRun) {
   homePipelineRunId = activeRun.run_id;
   let run;
   try {
-    run = await (await fetch(`/api/runs/${activeRun.run_id}`)).json();
+    run = await (await authFetch(`/api/runs/${activeRun.run_id}`)).json();
   } catch {
     return;
   }
@@ -297,7 +328,7 @@ $("new-run-form").addEventListener("submit", async (e) => {
   $("submit-btn").disabled = true;
   $("submit-btn").textContent = "Uploading…";
   try {
-    const res = await fetch("/api/runs", { method: "POST", body: form });
+    const res = await authFetch("/api/runs", { method: "POST", body: form });
     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
     const { run_id } = await res.json();
     openRun(run_id);
@@ -312,7 +343,7 @@ $("new-run-form").addEventListener("submit", async (e) => {
 $("cancel-btn").addEventListener("click", async () => {
   if (!confirm("Cancel this run? Work completed so far is kept, but no further stages will run.")) return;
   try {
-    await fetch(`/api/runs/${currentRunId}/cancel`, { method: "POST" });
+    await authFetch(`/api/runs/${currentRunId}/cancel`, { method: "POST" });
   } catch { /* poll() reflects the outcome regardless */ }
 });
 
@@ -346,7 +377,7 @@ async function poll() {
   if (!currentRunId) return;
   let run;
   try {
-    const res = await fetch(`/api/runs/${currentRunId}`);
+    const res = await authFetch(`/api/runs/${currentRunId}`);
     if (!res.ok) return;
     run = await res.json();
   } catch { return; }
@@ -658,7 +689,7 @@ $("confirm-form").addEventListener("submit", async (e) => {
     cv_folds: cvEnabled ? Math.max(2, Math.min(10, Number($("cv-folds-input").value) || 5)) : 0,
     tuning_enabled: $("tuning-enabled-input").checked,
   };
-  const res = await fetch(`/api/runs/${currentRunId}/confirm`, {
+  const res = await authFetch(`/api/runs/${currentRunId}/confirm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -742,7 +773,7 @@ $("approve-features-btn").addEventListener("click", async () => {
   const btn = $("approve-features-btn");
   btn.disabled = true;
   try {
-    const res = await fetch(`/api/runs/${currentRunId}/approve-features`, {
+    const res = await authFetch(`/api/runs/${currentRunId}/approve-features`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -1109,7 +1140,7 @@ $("chat-form").addEventListener("submit", async (e) => {
   if (lastRun) renderChat(lastRun); // show the question + thinking bubble immediately
   $("chat-send-btn").disabled = true;
   try {
-    const res = await fetch(`/api/runs/${currentRunId}/chat`, {
+    const res = await authFetch(`/api/runs/${currentRunId}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question }),
@@ -1209,7 +1240,7 @@ $("trace-toggle-btn").addEventListener("click", async () => {
   details.classList.toggle("hidden");
   details.open = wasHidden;
   if (wasHidden && !$("trace-body").textContent) {
-    const trace = await (await fetch(`/api/runs/${currentRunId}/trace`)).json();
+    const trace = await (await authFetch(`/api/runs/${currentRunId}/trace`)).json();
     $("trace-body").textContent = JSON.stringify(trace, null, 2);
   }
 });
@@ -1238,7 +1269,7 @@ async function loadPredictTab(run) {
   const form = $("predict-form");
   form.innerHTML = `<p class="muted small">Loading model inputs…</p>`;
   try {
-    const schema = await (await fetch(`/api/runs/${run.run_id}/model/schema`)).json();
+    const schema = await (await authFetch(`/api/runs/${run.run_id}/model/schema`)).json();
     const types = schema.feature_types || {};
     form.innerHTML = schema.feature_columns
       .map((col) => {
@@ -1267,7 +1298,7 @@ $("predict-form").addEventListener("submit", async (e) => {
   resultBox.classList.remove("hidden", "is-error");
   resultBox.innerHTML = `<p class="muted small">Scoring…</p>`;
   try {
-    const res = await fetch(`/api/runs/${currentRunId}/predict`, {
+    const res = await authFetch(`/api/runs/${currentRunId}/predict`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ values }),
@@ -1368,6 +1399,14 @@ function escapeHtml(str) {
   div.textContent = str ?? "";
   return div.innerHTML;
 }
+
+$("logout-btn").addEventListener("click", async () => {
+  try {
+    await window.fetch("/api/auth/logout", { method: "POST" });
+  } finally {
+    window.location.href = "/login.html";
+  }
+});
 
 loadRecentRuns();
 // independent of the per-run poll loop, so the sidebar stays eventually
