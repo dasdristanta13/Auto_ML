@@ -30,6 +30,11 @@ def _runtime_config() -> dict[str, Any]:
 
 
 def profile_node(state: PipelineState) -> PipelineState:
+    if state.get("profile"):
+        # experiment runs launched from an existing run reuse its profile —
+        # same file, same deterministic output, no point re-reading it
+        # (docs/superpowers/specs/2026-07-06-multi-experiment-design.md)
+        return state
     df = load_dataset(state["dataset_path"])
     state["profile"] = profile_dataset(df)
     return state

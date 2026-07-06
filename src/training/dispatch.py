@@ -119,16 +119,29 @@ _DEPRECATED_HYPERPARAM_VALUES: dict[str, dict[Any, dict[str, Any]]] = {
 def _sanitize_hyperparams(estimator_cls: type, hyperparams: dict[str, Any]) -> dict[str, Any]:
     """Defense-in-depth for CandidateModel.hyperparams (src/state.py), an
     untyped dict[str, Any] the LLM controls with no schema/enum validating
-    individual names or values. Two independent protections:
-    1. Drop any key estimator_cls.__init__ doesn't accept, via signature
+    individual names or values. Three independent protections:
+    1. Key/value hygiene, applied to EVERY estimator: strip stray whitespace
+       from keys and string values (an LLM emitting " reg_alpha" fails
+       XGBoost's C++ parameter validation at fit time), and drop keys that
+       aren't valid Python identifiers after stripping — no constructor or
+       **kwargs consumer accepts those.
+    2. Drop any key estimator_cls.__init__ doesn't accept, via signature
        introspection, instead of a typo'd/hallucinated name crashing
        construction with TypeError. Skipped when __init__ declares
        **kwargs (some XGBoost/LightGBM versions accept arbitrary extra
        keys), since nothing can be validated against an open signature.
-    2. Translate known deprecated/renamed values (e.g. sklearn's
+    3. Translate known deprecated/renamed values (e.g. sklearn's
        max_features="auto", removed in 1.3) to their modern equivalent.
     """
-    sanitized = dict(hyperparams)
+    sanitized: dict[str, Any] = {}
+    for key, value in hyperparams.items():
+        key = key.strip() if isinstance(key, str) else key
+        if not isinstance(key, str) or not key.isidentifier():
+            continue
+        if isinstance(value, str):
+            value = value.strip()
+        sanitized[key] = value
+
     params = inspect.signature(estimator_cls.__init__).parameters
     accepts_arbitrary_kwargs = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
     if not accepts_arbitrary_kwargs:
