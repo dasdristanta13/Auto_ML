@@ -53,6 +53,37 @@ const METRICS = {
 const DONUT_KEYS = ["--cat-1", "--cat-2", "--cat-3", "--cat-4"];
 
 const $ = (id) => document.getElementById(id);
+
+/* Wraps every /api/runs* call: on a 401 (missing/expired session — see
+   docs/superpowers/specs/2026-07-05-login-page-design.md), redirect to the
+   login page instead of letting the caller's existing error handling show
+   a confusing "failed to..." message for what's actually a logged-out
+   session. Uses window.fetch explicitly so this definition is never itself
+   rewritten by the blanket fetch()->authFetch() replacement above it. */
+async function authFetch(url, options) {
+  const res = await window.fetch(url, options);
+  if (res.status === 401) {
+    window.location.href = "/login.html";
+    throw new Error("session expired — redirecting to login");
+  }
+  return res;
+}
+
+/* Fires immediately on script load; doesn't block the rest of this file's
+   synchronous setup below, but in practice the very first authFetch() call
+   (loadRecentRuns(), at the bottom of this file) will also redirect within
+   the same tick if the session turns out to be missing — this is a fast
+   UX path, not the security boundary (that's the server's 401s above). */
+(async function guardSession() {
+  try {
+    const res = await window.fetch("/api/auth/session");
+    const data = await res.json();
+    if (!data.authenticated) window.location.href = "/login.html";
+  } catch {
+    window.location.href = "/login.html";
+  }
+})();
+
 let pollTimer = null;
 let currentRunId = null;
 let currentRunStatus = null;
@@ -70,7 +101,10 @@ function applyTheme(theme) {
   document.querySelector(".icon-moon").classList.toggle("hidden", isDark);
   document.querySelector(".icon-sun").classList.toggle("hidden", !isDark);
   $("theme-toggle").setAttribute("aria-pressed", String(isDark));
-  if (lastRun) renderDatasetSummary(lastRun); // re-tint donut for the new surface
+  if (lastRun) {
+    renderDatasetSummary(lastRun); // re-tint donuts for the new surface
+    renderClassDistribution(lastRun);
+  }
 }
 $("theme-toggle").addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
@@ -121,12 +155,17 @@ function showRunView() {
 
 async function loadRecentRuns() {
   const box = $("nav-runs");
+  let runs = [];
   try {
-    const runs = await (await fetch("/api/runs")).json();
-    if (!runs.length) {
-      box.innerHTML = `<span class="nav-runs-empty">No runs yet</span>`;
-      return;
-    }
+    runs = await (await authFetch("/api/runs")).json();
+  } catch {
+    box.innerHTML = `<span class="nav-runs-empty">No runs yet</span>`;
+    renderHome([]);
+    return;
+  }
+  if (!runs.length) {
+    box.innerHTML = `<span class="nav-runs-empty">No runs yet</span>`;
+  } else {
     box.innerHTML = "";
     for (const run of runs.slice(0, 6)) {
       const el = document.createElement("button");
@@ -137,9 +176,97 @@ async function loadRecentRuns() {
       el.onclick = () => openRun(run.run_id);
       box.appendChild(el);
     }
-  } catch {
-    box.innerHTML = `<span class="nav-runs-empty">No runs yet</span>`;
   }
+  renderHome(runs);
+}
+
+/* ================= home view ================= */
+
+const ACTIVE_STATUSES = ["profiling", "running", "awaiting_confirmation", "awaiting_feature_approval"];
+/* cross-run "best" is only meaningful for higher-is-better metrics */
+const HIGHER_IS_BETTER = new Set(["f1", "accuracy", "roc_auc", "r2"]);
+let homePipelineRunId = null;
+
+function renderHome(runs) {
+  const active = runs.filter((r) => ACTIVE_STATUSES.includes(r.status));
+  let bestRun = null;
+  for (const r of runs) {
+    if (r.status !== "completed" || r.best_score == null || !HIGHER_IS_BETTER.has(r.metric)) continue;
+    if (!bestRun || r.best_score > bestRun.best_score) bestRun = r;
+  }
+
+  const statsBox = $("home-stats");
+  statsBox.classList.toggle("hidden", !runs.length);
+  if (runs.length) {
+    statsBox.innerHTML = `
+      <div class="home-stat"><div class="home-stat-value">${runs.length}</div><div class="home-stat-label">Total experiments</div></div>
+      <div class="home-stat"><div class="home-stat-value">${bestRun ? bestRun.best_score.toFixed(3) : "—"}</div><div class="home-stat-label">${bestRun ? `Best ${escapeHtml(bestRun.metric)} score` : "Best score"}</div></div>
+      <div class="home-stat"><div class="home-stat-value">${active.length}</div><div class="home-stat-label">Active run${active.length === 1 ? "" : "s"}</div></div>`;
+  }
+
+  $("home-band").classList.toggle("hidden", !runs.length);
+  if (runs.length) {
+    $("home-projects-list").innerHTML = runs
+      .slice(0, 5)
+      .map(
+        (r) => `
+      <button type="button" class="home-project" data-run-id="${r.run_id}">
+        <span class="home-project-main">
+          <span class="home-project-name">${escapeHtml(r.filename)}</span>
+          <span class="home-project-desc">${escapeHtml(r.description || "")}</span>
+        </span>
+        <span class="home-project-meta">
+          ${r.best_score != null ? `<span class="home-project-score mono">${escapeHtml(r.metric)}: ${r.best_score.toFixed(3)}</span>` : ""}
+          <span class="status-badge ${r.status}">${r.status.replaceAll("_", " ")}</span>
+          <span class="home-project-time">${relativeTime(r.created_at)}</span>
+        </span>
+      </button>`
+      )
+      .join("");
+    $("home-projects-list").querySelectorAll(".home-project").forEach((el) => {
+      el.addEventListener("click", () => openRun(el.dataset.runId));
+    });
+  }
+  renderHomePipeline(active[0] || null);
+}
+
+async function renderHomePipeline(activeRun) {
+  const card = $("home-pipeline");
+  if (!activeRun) {
+    card.classList.add("hidden");
+    homePipelineRunId = null;
+    return;
+  }
+  homePipelineRunId = activeRun.run_id;
+  let run;
+  try {
+    run = await (await authFetch(`/api/runs/${activeRun.run_id}`)).json();
+  } catch {
+    return;
+  }
+  if (homePipelineRunId !== activeRun.run_id) return; // superseded by a newer refresh
+  card.classList.remove("hidden");
+  $("home-pipeline-sub").textContent = run.filename;
+
+  const done = new Set(run.stages_done || []);
+  const durations = {};
+  for (const rec of run.stage_timeline || []) durations[rec.node] = rec.duration_seconds;
+  let activeAssigned = false;
+  $("home-pipeline-rail").innerHTML = STAGES.map((stage) => {
+    const stageDone = stage.node === "poll_training" ? done.has("evaluate") : done.has(stage.node);
+    let cls = "pending";
+    if (stageDone) cls = "done";
+    else if (!activeAssigned) {
+      cls = "active";
+      activeAssigned = true;
+    }
+    const duration = durations[stage.node];
+    return `<li class="mini-stage ${cls}">
+      <span class="mini-stage-dot">${cls === "done" ? ICONS.check : ""}</span>
+      <span class="mini-stage-label">${stage.label}</span>
+      <span class="mini-stage-time mono">${cls === "done" && duration != null ? formatDuration(duration) : cls === "active" ? "running" : ""}</span>
+    </li>`;
+  }).join("");
 }
 
 /* ================= new run form ================= */
@@ -201,7 +328,7 @@ $("new-run-form").addEventListener("submit", async (e) => {
   $("submit-btn").disabled = true;
   $("submit-btn").textContent = "Uploading…";
   try {
-    const res = await fetch("/api/runs", { method: "POST", body: form });
+    const res = await authFetch("/api/runs", { method: "POST", body: form });
     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
     const { run_id } = await res.json();
     openRun(run_id);
@@ -216,7 +343,7 @@ $("new-run-form").addEventListener("submit", async (e) => {
 $("cancel-btn").addEventListener("click", async () => {
   if (!confirm("Cancel this run? Work completed so far is kept, but no further stages will run.")) return;
   try {
-    await fetch(`/api/runs/${currentRunId}/cancel`, { method: "POST" });
+    await authFetch(`/api/runs/${currentRunId}/cancel`, { method: "POST" });
   } catch { /* poll() reflects the outcome regardless */ }
 });
 
@@ -231,6 +358,9 @@ function openRun(runId) {
   $("trace-body").textContent = "";
   predictFormLoadedFor = null;
   $("predict-result").classList.add("hidden");
+  chatPendingQuestion = null;
+  $("chat-input").value = "";
+  $("chat-error").classList.add("hidden");
   switchTab("report");
   stopPolling();
   poll();
@@ -247,7 +377,7 @@ async function poll() {
   if (!currentRunId) return;
   let run;
   try {
-    const res = await fetch(`/api/runs/${currentRunId}`);
+    const res = await authFetch(`/api/runs/${currentRunId}`);
     if (!res.ok) return;
     run = await res.json();
   } catch { return; }
@@ -284,12 +414,15 @@ function render(run) {
   renderLeakage(run);
   renderFeatureApproval(run);
   renderDatasetSummary(run);
+  renderClassDistribution(run);
+  renderQuality(run);
   renderInsights(run);
   renderResults(run);
   renderTuningTrend(run);
   renderFeatureImportance(run);
   renderActivity(run);
   renderReport(run);
+  renderChat(run);
   renderCaveats(run);
   renderErrors(run);
 }
@@ -333,6 +466,14 @@ function renderStatCards(run) {
       sub: "fully trace-logged",
     },
   ];
+  const quality = summary.quality;
+  if (quality) {
+    cards.push({
+      icon: "shield", tint: "green", label: "Data quality",
+      value: `${Math.round(quality.overall * 100)}%`,
+      sub: "overall score",
+    });
+  }
   const insights = run.insights || [];
   if (insights.length) {
     cards.push({
@@ -548,7 +689,7 @@ $("confirm-form").addEventListener("submit", async (e) => {
     cv_folds: cvEnabled ? Math.max(2, Math.min(10, Number($("cv-folds-input").value) || 5)) : 0,
     tuning_enabled: $("tuning-enabled-input").checked,
   };
-  const res = await fetch(`/api/runs/${currentRunId}/confirm`, {
+  const res = await authFetch(`/api/runs/${currentRunId}/confirm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -632,7 +773,7 @@ $("approve-features-btn").addEventListener("click", async () => {
   const btn = $("approve-features-btn");
   btn.disabled = true;
   try {
-    const res = await fetch(`/api/runs/${currentRunId}/approve-features`, {
+    const res = await authFetch(`/api/runs/${currentRunId}/approve-features`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -725,6 +866,95 @@ function renderDatasetSummary(run) {
     <span class="chip detected">${ICONS.check} worst null rate: ${(worstNull * 100).toFixed(1)}%</span>
     ${targetCol ? `<span class="chip detected">${ICONS.check} target: <span class="mono">${escapeHtml(targetCol)}</span></span>` : ""}
     ${piiCount ? `<span class="chip flagged" title="Redacted from every AI-facing step">${ICONS.warning} ${piiCount} PII column(s)</span>` : ""}`;
+}
+
+/* ================= class distribution (classification targets) ================= */
+
+function renderClassDistribution(run) {
+  const card = $("classdist-card");
+  const spec = run.task_spec || {};
+  const confirmed = (run.stages_done || []).includes("confirm");
+  const target = (run.profile_columns || []).find((c) => c.name === spec.target_column);
+  const entries = target && target.top_values ? Object.entries(target.top_values).sort((a, b) => b[1] - a[1]) : [];
+  if (spec.task_type !== "classification" || !confirmed || entries.length < 2) {
+    card.classList.add("hidden");
+    return;
+  }
+  card.classList.remove("hidden");
+  $("classdist-sub").textContent = `target: ${spec.target_column}`;
+
+  const total = entries.reduce((acc, [, n]) => acc + n, 0);
+  const styles = getComputedStyle(document.documentElement);
+  const palette = DONUT_KEYS.map((k) => styles.getPropertyValue(k).trim());
+  const R = 44, C = 2 * Math.PI * R;
+  const gapPx = entries.length > 1 ? 3 : 0;
+  let offset = 0;
+  let svg = "";
+  entries.forEach(([, count], i) => {
+    const frac = count / total;
+    const len = Math.max(frac * C - gapPx, 1);
+    svg += `<circle cx="60" cy="60" r="${R}" fill="none" stroke="${palette[i % palette.length]}"
+      stroke-width="14" stroke-linecap="butt"
+      stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-offset}"
+      transform="rotate(-90 60 60)"/>`;
+    offset += frac * C;
+  });
+  $("classdist-donut").innerHTML = svg;
+  $("classdist-center").innerHTML = `${entries.length}<small>classes</small>`;
+
+  $("classdist-legend").innerHTML = entries
+    .map(
+      ([label, count], i) => `
+      <li><span class="swatch" style="background:${palette[i % palette.length]}"></span>
+      ${escapeHtml(label)}<span class="count">${count.toLocaleString()} (${((count / total) * 100).toFixed(1)}%)</span></li>`
+    )
+    .join("");
+
+  const covered = target.n_unique <= entries.length; // top_values holds every class
+  const majority = entries[0][1];
+  const minority = entries[entries.length - 1][1];
+  const ratio = covered && minority > 0 ? majority / minority : null;
+  const plan = run.resampling_plan || {};
+  $("classdist-chips").innerHTML = `
+    ${ratio != null ? `<span class="chip ${ratio >= 3 ? "flagged" : "detected"}">${ratio >= 3 ? ICONS.warning : ICONS.check} imbalance ratio ${ratio.toFixed(1)} : 1</span>` : ""}
+    ${!covered ? `<span class="chip detected">top ${entries.length} of ${target.n_unique} classes shown</span>` : ""}
+    ${plan.enabled ? `<span class="chip detected">${ICONS.check} ${escapeHtml(String(plan.method || "").replaceAll("_", " "))} applied during training</span>` : ""}`;
+}
+
+/* ================= data quality overview ================= */
+
+function renderQuality(run) {
+  const quality = (run.profile_summary || {}).quality;
+  const card = $("quality-card");
+  if (!quality) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+
+  const overallPct = Math.round(quality.overall * 100);
+  $("quality-sub").textContent = `${quality.duplicate_row_count.toLocaleString()} duplicate row(s)`;
+
+  const R = 34, C = 2 * Math.PI * R;
+  $("quality-ring").innerHTML = `
+    <svg viewBox="0 0 80 80" role="img" aria-label="Overall data quality ${overallPct}%">
+      <circle cx="40" cy="40" r="${R}" fill="none" stroke="var(--border-subtle)" stroke-width="8"/>
+      <circle cx="40" cy="40" r="${R}" fill="none" stroke="var(--accent-success)" stroke-width="8" stroke-linecap="round"
+        stroke-dasharray="${((overallPct / 100) * C).toFixed(2)} ${C.toFixed(2)}" transform="rotate(-90 40 40)"/>
+    </svg>
+    <div class="quality-ring-label"><strong>${overallPct}%</strong><small>overall</small></div>`;
+
+  const dims = [
+    { label: "Completeness", value: quality.completeness, hint: "share of cells that are not null" },
+    { label: "Uniqueness", value: quality.uniqueness, hint: "share of rows that are not exact duplicates" },
+  ];
+  $("quality-bars").innerHTML = dims
+    .map(
+      (d) => `
+      <div class="quality-row" title="${d.hint}">
+        <span class="quality-name">${d.label}</span>
+        <span class="fi-track"><span class="fi-fill quality-fill" style="width:${(d.value * 100).toFixed(1)}%"></span></span>
+        <span class="quality-value mono">${Math.round(d.value * 100)}%</span>
+      </div>`
+    )
+    .join("");
 }
 
 /* ================= results table ================= */
@@ -850,6 +1080,84 @@ function renderTuningTrend(run) {
     <li><span class="tt-chip tt-chip-best"></span>best so far</li>`;
 }
 
+/* ================= AI assistant panel ================= */
+
+let chatPendingQuestion = null;
+
+function renderChat(run) {
+  const ready = ["completed", "failed"].includes(run.status);
+  $("chat-placeholder").classList.toggle("hidden", ready);
+  $("chat-thread").classList.toggle("hidden", !ready);
+  $("chat-suggestions").classList.toggle("hidden", !ready);
+  $("chat-form").classList.toggle("hidden", !ready);
+  if (!ready) return;
+
+  const history = run.chat_history || [];
+  const bubbles = history.map(
+    (m) => `
+      <div class="chat-msg chat-${m.role}">
+        <span class="chat-role">${m.role === "user" ? "You" : "Assistant"}</span>
+        <p>${escapeHtml(m.content)}</p>
+      </div>`
+  );
+  if (chatPendingQuestion != null) {
+    bubbles.push(`
+      <div class="chat-msg chat-user">
+        <span class="chat-role">You</span>
+        <p>${escapeHtml(chatPendingQuestion)}</p>
+      </div>`);
+    bubbles.push(`
+      <div class="chat-msg chat-assistant chat-thinking">
+        <span class="chat-role">Assistant</span>
+        <p>Thinking…</p>
+      </div>`);
+  }
+  $("chat-thread").innerHTML = bubbles.length
+    ? bubbles.join("")
+    : `<p class="muted small">Ask anything about this run's data, decisions, or results.</p>`;
+  $("chat-thread").scrollTop = $("chat-thread").scrollHeight;
+
+  const suggestions = run.suggested_questions || [];
+  $("chat-suggestions").innerHTML = suggestions
+    .map((q) => `<button type="button" class="suggestion-chip">${escapeHtml(q)}</button>`)
+    .join("");
+  $("chat-suggestions").querySelectorAll(".suggestion-chip").forEach((chip, i) => {
+    chip.addEventListener("click", () => {
+      $("chat-input").value = suggestions[i];
+      $("chat-input").focus();
+    });
+  });
+}
+
+$("chat-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = $("chat-input");
+  const question = input.value.trim();
+  if (!question || !currentRunId || chatPendingQuestion != null) return;
+  input.value = "";
+  $("chat-error").classList.add("hidden");
+  chatPendingQuestion = question;
+  if (lastRun) renderChat(lastRun); // show the question + thinking bubble immediately
+  $("chat-send-btn").disabled = true;
+  try {
+    const res = await authFetch(`/api/runs/${currentRunId}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    chatPendingQuestion = null;
+    await poll(); // re-fetch: chat_history now contains both messages
+  } catch (err) {
+    chatPendingQuestion = null;
+    if (lastRun) renderChat(lastRun);
+    $("chat-error").textContent = "Could not get an answer: " + err.message;
+    $("chat-error").classList.remove("hidden");
+  } finally {
+    $("chat-send-btn").disabled = false;
+  }
+});
+
 /* ================= feature importance ================= */
 
 function renderFeatureImportance(run) {
@@ -932,7 +1240,7 @@ $("trace-toggle-btn").addEventListener("click", async () => {
   details.classList.toggle("hidden");
   details.open = wasHidden;
   if (wasHidden && !$("trace-body").textContent) {
-    const trace = await (await fetch(`/api/runs/${currentRunId}/trace`)).json();
+    const trace = await (await authFetch(`/api/runs/${currentRunId}/trace`)).json();
     $("trace-body").textContent = JSON.stringify(trace, null, 2);
   }
 });
@@ -961,7 +1269,7 @@ async function loadPredictTab(run) {
   const form = $("predict-form");
   form.innerHTML = `<p class="muted small">Loading model inputs…</p>`;
   try {
-    const schema = await (await fetch(`/api/runs/${run.run_id}/model/schema`)).json();
+    const schema = await (await authFetch(`/api/runs/${run.run_id}/model/schema`)).json();
     const types = schema.feature_types || {};
     form.innerHTML = schema.feature_columns
       .map((col) => {
@@ -990,7 +1298,7 @@ $("predict-form").addEventListener("submit", async (e) => {
   resultBox.classList.remove("hidden", "is-error");
   resultBox.innerHTML = `<p class="muted small">Scoring…</p>`;
   try {
-    const res = await fetch(`/api/runs/${currentRunId}/predict`, {
+    const res = await authFetch(`/api/runs/${currentRunId}/predict`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ values }),
@@ -1091,6 +1399,14 @@ function escapeHtml(str) {
   div.textContent = str ?? "";
   return div.innerHTML;
 }
+
+$("logout-btn").addEventListener("click", async () => {
+  try {
+    await window.fetch("/api/auth/logout", { method: "POST" });
+  } finally {
+    window.location.href = "/login.html";
+  }
+});
 
 loadRecentRuns();
 // independent of the per-run poll loop, so the sidebar stays eventually

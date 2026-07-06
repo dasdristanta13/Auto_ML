@@ -144,6 +144,13 @@ def _mock_response(node: str, system_prompt: str) -> Any:
             "Unset AUTOML_MOCK_LLM and configure a provider in config/models.yaml "
             "to get a real plain-language rationale here."
         )
+    if node == "chat":
+        return (
+            "MOCK-MODE ANSWER (AUTOML_MOCK_LLM=1 — no real LLM was called). "
+            "In a real run, this would answer your question using only this "
+            "run's already-computed profile, insights, feature plan, "
+            "training results, and report."
+        )
     raise ValueError(f"mock mode has no canned response for node '{node}'")
 
 

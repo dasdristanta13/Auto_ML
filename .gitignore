@@ -21,3 +21,7 @@ tests/fixtures/*.csv
 
 # local Claude Code tool-permission settings (machine-specific, not shared config)
 .claude/settings.local.json
+
+# local worktree scratch directories (superpowers:using-git-worktrees)
+.worktrees/
+worktrees/
