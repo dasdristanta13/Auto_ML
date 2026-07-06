@@ -256,6 +256,15 @@
               </label>
             </div>
           </label>
+          <label class="field cv-field">
+            <span>Feature selection</span>
+            <div class="cv-controls">
+              <label class="checkbox-inline">
+                <input type="checkbox" id="feature-selection-input" />
+                Recursive feature elimination per candidate (slower; recommended for feature-heavy data)
+              </label>
+            </div>
+          </label>
           <div class="btn-row">
             <button type="submit" class="btn primary">Confirm &amp; train</button>
           </div>
@@ -353,6 +362,7 @@
           <div class="chip-row">
             <div class="chip cv-config-chip" id="cv-config-chip"></div>
             <div class="chip cv-config-chip hidden" id="resampling-config-chip"></div>
+            <div class="chip cv-config-chip hidden" id="fs-config-chip"></div>
           </div>
           <div class="table-scroll"><table class="results-table" id="results-table"></table></div>
         </div>

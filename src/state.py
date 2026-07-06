@@ -154,6 +154,8 @@ class PipelineState(TypedDict, total=False):
     cv_enabled: bool  # user-configurable at the confirm checkpoint (default True)
     cv_folds: int  # user-requested fold count; auto-reduced per candidate if data can't support it
     tuning_enabled: bool  # Optuna hyperparameter tuning per candidate (confirm checkpoint, default True)
+    feature_selection_enabled: bool  # one-shot RFECV with a basic model, subset shared by all candidates
+    feature_selection_result: dict[str, Any]  # select_features() output: what was eliminated and why
     training_run_ids: list[str]
     training_results: list[dict[str, Any]]
     best_model: dict[str, Any]
@@ -184,6 +186,7 @@ def new_state(run_id: str, dataset_path: str, use_case_description: str) -> Pipe
         cv_enabled=True,
         cv_folds=5,
         tuning_enabled=True,
+        feature_selection_enabled=False,
         training_run_ids=[],
         training_results=[],
     )

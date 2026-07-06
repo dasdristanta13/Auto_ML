@@ -203,6 +203,7 @@ class ConfirmRequest(BaseModel):
     cv_enabled: bool = True
     cv_folds: int = 5
     tuning_enabled: bool = True
+    feature_selection_enabled: bool = False
 
 
 def _get_entry(run_id: str) -> dict[str, Any]:
@@ -376,6 +377,8 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
                 "requested_folds": state.get("cv_folds", 5),
             },
             "tuning_config": {"enabled": state.get("tuning_enabled", True)},
+            "feature_selection_config": {"enabled": state.get("feature_selection_enabled", False)},
+            "feature_selection": state.get("feature_selection_result"),
             "eda_report": state.get("eda_report"),
             "resampling_suggestion": state.get("resampling_suggestion"),
             "resampling_plan": state.get("resampling_plan"),
@@ -551,6 +554,7 @@ def confirm_run(
         state["cv_enabled"] = body.cv_enabled
         state["cv_folds"] = body.cv_folds
         state["tuning_enabled"] = body.tuning_enabled
+        state["feature_selection_enabled"] = body.feature_selection_enabled
         state["needs_human_confirmation"] = False
         state["human_confirmed"] = True
         entry["status"] = "running"

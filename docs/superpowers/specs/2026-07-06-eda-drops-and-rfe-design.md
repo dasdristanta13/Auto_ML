@@ -39,22 +39,38 @@ Status: approved
 
 ### B. RFE toggle end to end
 
+> **Revision (2026-07-06, user-directed):** elimination runs ONCE with a very
+> basic model, and the resulting feature subset is shared by every candidate —
+> not per-candidate RFECV inside each pipeline. Cheaper (one RFECV instead of
+> one per fit path per candidate) and every model trains on the same feature
+> space, so results are directly comparable.
+
 - `PipelineState`: `feature_selection_enabled: bool` (default False in
-  `new_state`), mirroring `cv_enabled`/`tuning_enabled`.
+  `new_state`), mirroring `cv_enabled`/`tuning_enabled`; plus
+  `feature_selection_result: dict` recording what the selection pass decided.
 - `ConfirmRequest` (src/api/server.py): `feature_selection_enabled: bool =
   False`; the confirm endpoint copies it into state.
-- `dispatch_training_node` passes it to `train_model`; `train_model` and
-  `_run_job` gain `feature_selection_enabled: bool = False`.
-- `_make_pipeline` inserts `RFECV` between preprocessing and the model when
-  enabled: `RFECV(estimator=<fresh instance of the candidate>, step=0.2,
-  cv=_tuning_splitter(...), scoring=<task metric via _tuning_scoring>,
-  min_features_to_select=1)`. Present in every fit path (holdout, k-fold CV,
-  tuning trials) so scores stay comparable and leakage-safe.
-- Auto-skip with a note when the feature matrix is too narrow (< 5 columns
-  entering the pipeline) — same "adjust and explain" pattern as CV/SMOTE.
-- Job registry gains `feature_selection`: `{enabled, n_features_selected,
-  selected_features, note}`; `poll_training_job` passes it through, and
-  feature importance is computed over the RFE-selected feature names.
+- New `select_features(...)` in src/training/dispatch.py: loads the
+  transformed dataset through the same normalization path as training
+  (shared `_load_training_frame` helper), reproduces the deterministic
+  train/test split, and fits `Pipeline([prep, RFECV(basic_model, step=0.2,
+  cv=_tuning_splitter(...), scoring=<task metric>)])` on the TRAINING split
+  only (selection never sees held-out rows). Basic model:
+  `LogisticRegression(max_iter=1000)` for classification, `Ridge()` for
+  regression. Preprocessor output names map 1:1 to raw columns (one-hot
+  happens upstream in apply_feature_plan), so the selected names are raw
+  column names.
+- `dispatch_training_node` calls `select_features` once when the toggle is
+  on, stores the result in `state["feature_selection_result"]`, and passes
+  `selected_features` (+ any skip note) to every `train_model` call. Each
+  job subsets its feature columns to the shared list right after the split.
+- Auto-skip with a note when the feature matrix is too narrow (< 5 columns)
+  or the data can't support the selection CV — same "adjust and explain"
+  pattern as CV/SMOTE; candidates then train on all features.
+- Job registry gains `feature_selection`: `{enabled, basic_model,
+  n_features_total, n_features_selected, selected_features, note}`;
+  `poll_training_job` passes it through, and feature importance is computed
+  over the selected feature names.
 
 ### C. EDA insight for wide data (`src/profiling/eda.py`)
 

@@ -732,6 +732,7 @@ $("confirm-form").addEventListener("submit", async (e) => {
     cv_enabled: cvEnabled,
     cv_folds: cvEnabled ? Math.max(2, Math.min(10, Number($("cv-folds-input").value) || 5)) : 0,
     tuning_enabled: $("tuning-enabled-input").checked,
+    feature_selection_enabled: $("feature-selection-input").checked,
   };
   const res = await authFetch(`/api/runs/${currentRunId}/confirm`, {
     method: "POST",
@@ -1033,6 +1034,23 @@ function renderResults(run) {
     resamplingChip.innerHTML = `${ICONS.check}${escapeHtml(applied.replaceAll("_", " "))} applied to training data`;
   } else {
     resamplingChip.classList.add("hidden");
+  }
+
+  const fsChip = $("fs-config-chip");
+  const fsConfig = run.feature_selection_config || {};
+  if (fsConfig.enabled) {
+    const fs = run.feature_selection || {};
+    fsChip.classList.remove("hidden");
+    fsChip.className = "chip detected cv-config-chip";
+    if (fs.enabled && fs.n_features_selected != null) {
+      fsChip.title = `Selected with ${fs.basic_model || "a basic model"}: ${(fs.selected_features || []).join(", ")}`;
+      fsChip.innerHTML = `${ICONS.check}RFE kept ${fs.n_features_selected} of ${fs.n_features_total} features (all models)`;
+    } else {
+      fsChip.title = fs.note || "";
+      fsChip.innerHTML = fs.note ? `Feature selection skipped` : `Feature selection (RFE) requested`;
+    }
+  } else {
+    fsChip.classList.add("hidden");
   }
 
   const metricNames = [...new Set(results.flatMap((r) => Object.keys(r.metrics || {})))];

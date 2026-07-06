@@ -19,7 +19,7 @@ from src.profiling.leakage import detect_target_leakage
 from src.profiling.profile import profile_dataset
 from src.sandbox.execute import SandboxExecutionError, SandboxTimeoutError, SandboxValidationError, dry_run, run_on_full_dataset
 from src.state import PipelineState
-from src.training.dispatch import poll_training_job, train_model
+from src.training.dispatch import poll_training_job, select_features, train_model
 
 TRANSFORMED_DIR = Path("artifacts/transformed")
 
@@ -84,7 +84,7 @@ def eda_node(state: PipelineState) -> PipelineState:
     feature_engineering node's prompt and is shown to the user for approval
     before anything gets applied."""
     df = load_dataset(state["dataset_path"])
-    result = run_eda(df, state.get("profile", {}), state.get("task_spec", {}))
+    result = run_eda(df, state.get("profile", {}), state.get("task_spec", {}), state.get("leakage_flags"))
     state["eda_report"] = {"insights": result["insights"], "suggested_steps": result["suggested_steps"]}
     state["resampling_suggestion"] = result["resampling_suggestion"]
     return state
@@ -243,7 +243,24 @@ def dispatch_training_node(state: PipelineState) -> PipelineState:
     cv_enabled = state.get("cv_enabled", True)
     cv_folds = state.get("cv_folds", 5)
     tuning_enabled = state.get("tuning_enabled", True)
+    feature_selection_enabled = state.get("feature_selection_enabled", False)
     resampling_plan = state.get("resampling_plan") or {"enabled": False, "method": "none"}
+
+    # feature elimination runs ONCE here with a basic linear model; the chosen
+    # subset is shared by every candidate so all models train on the same
+    # feature space (2026-07-06-eda-drops-and-rfe-design.md, revision).
+    selection: dict[str, Any] = {}
+    if feature_selection_enabled:
+        selection = select_features(
+            state["transformed_dataset_path"],
+            task_spec["target_column"],
+            task_spec["task_type"],
+            task_spec.get("time_column"),
+            state.get("training_preprocess_steps", []),
+            task_spec.get("metric"),
+        )
+        state["feature_selection_result"] = selection
+
     run_ids = []
     for candidate in state.get("candidate_models", []):
         run_id = train_model.invoke(
@@ -261,6 +278,8 @@ def dispatch_training_node(state: PipelineState) -> PipelineState:
                 "cv_folds": cv_folds,
                 "tuning_enabled": tuning_enabled,
                 "tuning_metric": task_spec.get("metric"),
+                "selected_features": selection.get("selected_features") or None,
+                "feature_selection_note": selection.get("note"),
                 "resampling_enabled": resampling_plan.get("enabled", False),
                 "resampling_method": resampling_plan.get("method", "none"),
             }
