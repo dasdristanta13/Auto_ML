@@ -404,6 +404,72 @@ function renderPreviewTable(data) {
   $("preview-next").addEventListener("click", () => { previewState.page += 1; fetchAndRenderPreviewPage(); });
 }
 
+async function openColumnExplorer(columnName) {
+  $("column-explorer-name").textContent = columnName;
+  $("column-explorer").classList.remove("hidden");
+  $("column-explorer-body").innerHTML = `<p class="muted small">Loading…</p>`;
+
+  let detail;
+  try {
+    const res = await authFetch(`/api/runs/${currentDatasetRunId}/columns/${encodeURIComponent(columnName)}`);
+    if (!res.ok) throw new Error("failed to load column detail");
+    detail = await res.json();
+  } catch {
+    $("column-explorer-body").innerHTML = `<p class="muted small">Could not load column details.</p>`;
+    return;
+  }
+
+  let html = `<p class="muted small mono">${escapeHtml(detail.dtype)}</p>`;
+
+  if (detail.is_numeric) {
+    // A numeric column that is entirely NaN reports is_numeric: true but omits
+    // histogram/stats altogether (see src/profiling/preview.py) — guard rather
+    // than assume they're always present alongside is_numeric.
+    if (detail.histogram && detail.stats) {
+      const hist = detail.histogram;
+      const maxCount = Math.max(...hist.counts, 1);
+      html += `<div class="explorer-histogram">${hist.counts
+        .map((c) => `<span class="explorer-bar" style="height:${((c / maxCount) * 100).toFixed(0)}%" title="${c}"></span>`)
+        .join("")}</div>`;
+      const s = detail.stats;
+      html += `<div class="explorer-stats">
+        <div>Mean <strong>${s.mean.toFixed(2)}</strong></div>
+        <div>Median <strong>${s.median.toFixed(2)}</strong></div>
+        <div>Std Dev <strong>${s.std.toFixed(2)}</strong></div>
+        <div>Min <strong>${s.min.toFixed(2)}</strong></div>
+        <div>Max <strong>${s.max.toFixed(2)}</strong></div>
+        <div>P25 <strong>${s.p25.toFixed(2)}</strong></div>
+        <div>P75 <strong>${s.p75.toFixed(2)}</strong></div>
+        <div>Skew <strong>${s.skew.toFixed(2)}</strong></div>
+      </div>`;
+      if (detail.correlation_with_target != null) {
+        html += `<p class="muted small">Correlation with target: <strong>${detail.correlation_with_target.toFixed(3)}</strong></p>`;
+      }
+    } else {
+      html += `<p class="muted small">This column has no non-missing values, so no distribution can be shown.</p>`;
+    }
+  } else {
+    html += `<div class="field"><span>Top values</span><ul class="callout-list">${Object.entries(detail.top_values || {})
+      .map(([k, v]) => `<li>${escapeHtml(k)} <span class="muted small">(${v})</span></li>`)
+      .join("")}</ul></div>`;
+  }
+
+  const insights = detail.ml_insights || { analyzed: false };
+  if (insights.analyzed) {
+    html += `<div class="field"><span>ML Insights</span><ul class="callout-list">${(insights.recommended_steps || [])
+      .map((s) => `<li><span class="step-op">${escapeHtml(s.op)}</span><span class="step-rationale">${escapeHtml(s.rationale || "")}</span></li>`)
+      .join("")}${(insights.leakage_flags || [])
+      .map((f) => `<li>${ICONS.warning}<span>${escapeHtml(f.reason)}</span></li>`)
+      .join("")}</ul></div>`;
+  } else {
+    html += `<p class="muted small">Run further into the pipeline to see ML insights for this column.</p>`;
+  }
+
+  $("column-explorer-body").innerHTML = html;
+}
+
+$("column-explorer-close").addEventListener("click", () => $("column-explorer").classList.add("hidden"));
+
 let previewSearchDebounce = null;
 $("preview-search").addEventListener("input", (e) => {
   clearTimeout(previewSearchDebounce);
