@@ -786,3 +786,26 @@ select, textarea, input[type="text"], input[type="number"] {
   box-shadow: var(--shadow); padding: var(--sp-4); overflow-y: auto; z-index: 20;
 }
 .column-explorer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--sp-3); }
+
+/* ================= interactive preview table ================= */
+
+.preview-toolbar { display: flex; align-items: center; gap: var(--sp-2); }
+.preview-search { font-size: var(--text-sm); min-width: 200px; }
+.preview-colvis { position: relative; display: flex; flex-wrap: wrap; gap: 4px; max-width: 340px; }
+.colvis-item { font-size: var(--text-xs); display: flex; align-items: center; gap: 4px; }
+
+.preview-table-scroll { overflow: auto; max-height: 480px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.preview-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.preview-table th {
+  position: sticky; top: 0; background: var(--bg-surface-raised); text-align: left;
+  padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; cursor: pointer;
+}
+.preview-table th:first-child, .preview-table td:first-child { position: sticky; left: 0; background: var(--bg-surface); z-index: 1; }
+.preview-table td { padding: 6px 10px; border-bottom: 1px solid var(--border-subtle); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-table td.num { text-align: right; font-family: var(--font-mono); }
+.col-type-badge { font-size: 10px; color: var(--text-secondary); font-weight: 500; text-transform: uppercase; margin-left: 4px; }
+.col-profile-btn { background: none; border: none; cursor: pointer; color: var(--text-secondary); margin-left: 4px; vertical-align: middle; }
+.col-profile-btn:hover { color: var(--accent-primary); }
+.preview-cell-missing { color: var(--text-secondary); font-style: italic; }
+.preview-row-duplicate { border-left: 3px solid var(--accent-warning); }
+.preview-pager { display: flex; align-items: center; justify-content: center; gap: var(--sp-3); margin-top: var(--sp-3); }

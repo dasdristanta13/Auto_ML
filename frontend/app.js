@@ -91,6 +91,8 @@ let selectedFile = null;
 let lastRun = null;
 let predictFormLoadedFor = null;
 let currentDatasetRunId = null;
+let previewState = { page: 1, pageSize: 50, sortBy: null, sortDir: "asc", search: "" };
+let previewColumns = [];
 
 /* ================= theme ================= */
 
@@ -233,6 +235,10 @@ async function openDatasetDetail(runId) {
     summary = await (await authFetch(`/api/runs/${runId}/dataset-summary`)).json();
   } catch { /* KPI row degrades gracefully to "—" placeholders */ }
   renderDatasetKpis(run, summary);
+
+  previewState = { page: 1, pageSize: 50, sortBy: null, sortDir: "asc", search: "" };
+  $("preview-search").value = "";
+  await loadPreviewTable(run);
 }
 
 function renderDatasetKpis(run, summary) {
@@ -268,6 +274,143 @@ function renderDatasetKpis(run, summary) {
     )
     .join("");
 }
+
+/* ================= interactive preview table ================= */
+
+function classifyPreviewType(dtype) {
+  const d = String(dtype || "").toLowerCase();
+  if (d.includes("bool")) return "boolean";
+  if (d.includes("datetime") || d.includes("date")) return "datetime";
+  if (d.includes("int") || d.includes("float")) return "numeric";
+  return "categorical";
+}
+
+async function loadPreviewTable(run) {
+  previewColumns = run.profile_columns || [];
+  const layoutKey = `automl-preview-layout-${currentDatasetRunId}`;
+  const savedLayout = JSON.parse(localStorage.getItem(layoutKey) || "{}");
+  const hiddenColumns = new Set(savedLayout.hiddenColumns || []);
+
+  $("preview-colvis").innerHTML = previewColumns
+    .map(
+      (c) => `<label class="colvis-item"><input type="checkbox" data-col="${escapeHtml(c.name)}" ${hiddenColumns.has(c.name) ? "" : "checked"}/> ${escapeHtml(c.name)}</label>`
+    )
+    .join("");
+  $("preview-colvis").querySelectorAll("input[type=checkbox]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const hidden = new Set(
+        Array.from($("preview-colvis").querySelectorAll("input:not(:checked)")).map((el) => el.dataset.col)
+      );
+      localStorage.setItem(layoutKey, JSON.stringify({ hiddenColumns: [...hidden] }));
+      fetchAndRenderPreviewPage();
+    });
+  });
+
+  await fetchAndRenderPreviewPage();
+}
+
+async function fetchAndRenderPreviewPage() {
+  const params = new URLSearchParams({
+    page: String(previewState.page),
+    page_size: String(previewState.pageSize),
+    sort_dir: previewState.sortDir,
+  });
+  if (previewState.sortBy) params.set("sort_by", previewState.sortBy);
+  if (previewState.search) params.set("search", previewState.search);
+
+  let data;
+  try {
+    data = await (await authFetch(`/api/runs/${currentDatasetRunId}/preview?${params}`)).json();
+  } catch {
+    $("preview-table").innerHTML = `<tr><td>Could not load preview.</td></tr>`;
+    return;
+  }
+  renderPreviewTable(data);
+}
+
+function renderPreviewTable(data) {
+  const layoutKey = `automl-preview-layout-${currentDatasetRunId}`;
+  const savedLayout = JSON.parse(localStorage.getItem(layoutKey) || "{}");
+  const hiddenColumns = new Set(savedLayout.hiddenColumns || []);
+  const visibleColumns = previewColumns.filter((c) => !hiddenColumns.has(c.name));
+  const piiSet = new Set(data.pii_columns || []);
+  const duplicateSet = new Set(data.duplicate_row_indices || []);
+
+  const numericRanges = {};
+  for (const col of visibleColumns) {
+    if (classifyPreviewType(col.dtype) !== "numeric") continue;
+    const values = data.rows.map((r) => r[col.name]).filter((v) => v != null);
+    numericRanges[col.name] = values.length ? { min: Math.min(...values), max: Math.max(...values) } : null;
+  }
+
+  let html = "<tr>" + visibleColumns
+    .map(
+      (c) => `<th data-col="${escapeHtml(c.name)}" class="sortable">
+        ${escapeHtml(c.name)} <span class="col-type-badge">${classifyPreviewType(c.dtype)}</span>
+        ${piiSet.has(c.name) ? `<span class="chip flagged" title="PII column">PII</span>` : ""}
+        <button type="button" class="col-profile-btn" data-col="${escapeHtml(c.name)}" title="Profile this column">${ICONS.search}</button>
+      </th>`
+    )
+    .join("") + "</tr>";
+
+  for (const row of data.rows) {
+    const isDup = duplicateSet.has(row._row_index);
+    html += `<tr class="${isDup ? "preview-row-duplicate" : ""}">`;
+    for (const col of visibleColumns) {
+      const value = row[col.name];
+      const type = classifyPreviewType(col.dtype);
+      if (value == null) {
+        html += `<td class="preview-cell-missing">—</td>`;
+      } else if (type === "numeric") {
+        const range = numericRanges[col.name];
+        const pct = range && range.max > range.min ? (value - range.min) / (range.max - range.min) : 0;
+        html += `<td class="num preview-cell-numeric" style="background:linear-gradient(90deg, var(--accent-primary-soft) ${(pct * 100).toFixed(0)}%, transparent ${(pct * 100).toFixed(0)}%)">${escapeHtml(String(value))}</td>`;
+      } else if (type === "boolean") {
+        html += `<td><span class="chip ${value ? "detected" : "flagged"}">${String(value)}</span></td>`;
+      } else if (type === "categorical") {
+        html += `<td><span class="chip detected">${escapeHtml(String(value))}</span></td>`;
+      } else {
+        html += `<td title="${escapeHtml(String(value))}">${escapeHtml(String(value))}</td>`;
+      }
+    }
+    html += "</tr>";
+  }
+  $("preview-table").innerHTML = html;
+
+  $("preview-table").querySelectorAll("th.sortable").forEach((th) => {
+    th.addEventListener("click", (e) => {
+      if (e.target.closest(".col-profile-btn")) return;
+      const col = th.dataset.col;
+      previewState.sortDir = previewState.sortBy === col && previewState.sortDir === "asc" ? "desc" : "asc";
+      previewState.sortBy = col;
+      fetchAndRenderPreviewPage();
+    });
+  });
+  $("preview-table").querySelectorAll(".col-profile-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openColumnExplorer(btn.dataset.col);
+    });
+  });
+
+  const totalPages = Math.max(1, Math.ceil(data.total_count / previewState.pageSize));
+  $("preview-pager").innerHTML = `
+    <button type="button" class="btn ghost" id="preview-prev" ${previewState.page <= 1 ? "disabled" : ""}>Prev</button>
+    <span class="muted small">Page ${data.page} of ${totalPages} · ${data.total_count.toLocaleString()} rows</span>
+    <button type="button" class="btn ghost" id="preview-next" ${previewState.page >= totalPages ? "disabled" : ""}>Next</button>`;
+  $("preview-prev").addEventListener("click", () => { previewState.page -= 1; fetchAndRenderPreviewPage(); });
+  $("preview-next").addEventListener("click", () => { previewState.page += 1; fetchAndRenderPreviewPage(); });
+}
+
+let previewSearchDebounce = null;
+$("preview-search").addEventListener("input", (e) => {
+  clearTimeout(previewSearchDebounce);
+  previewSearchDebounce = setTimeout(() => {
+    previewState.search = e.target.value.trim();
+    previewState.page = 1;
+    fetchAndRenderPreviewPage();
+  }, 300);
+});
 
 $("dataset-breadcrumb-back").addEventListener("click", showDatasetsView);
 
