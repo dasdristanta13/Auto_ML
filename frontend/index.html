@@ -64,6 +64,10 @@
       <div class="header-actions">
         <span id="status-badge" class="status-badge hidden"><span class="dot"></span><span id="status-badge-text">—</span></span>
         <button class="btn danger hidden" id="cancel-btn" type="button">Cancel run</button>
+        <button class="btn hidden" id="rerun-btn" type="button" title="Start a new experiment on this run's dataset — no re-upload needed">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+          Re-run dataset
+        </button>
         <button class="btn primary" id="new-run-btn" type="button">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
           New Experiment
@@ -166,6 +170,26 @@
 
       <div class="run-layout">
       <div class="run-main">
+
+      <!-- new experiment on this dataset (multi-experiment spec) -->
+      <div class="card checkpoint hidden" id="rerun-card">
+        <h3>
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+          New experiment on this dataset
+        </h3>
+        <p class="muted">Describe the new goal — the dataset and its profile are reused, so no re-upload is needed. You'll confirm the target and metric before anything trains.</p>
+        <form id="rerun-form">
+          <label class="field">
+            <span class="visually-hidden">New use case description</span>
+            <textarea id="rerun-description" rows="2" required
+              placeholder="e.g. This time, predict monthly spend instead of churn"></textarea>
+          </label>
+          <div class="btn-row">
+            <button type="submit" class="btn primary" id="rerun-submit-btn">Start experiment</button>
+            <button type="button" class="btn" id="rerun-close-btn">Cancel</button>
+          </div>
+        </form>
+      </div>
 
       <!-- live pipeline -->
       <section class="card">

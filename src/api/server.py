@@ -361,6 +361,7 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
             "run_id": run_id,
             "filename": entry["filename"],
             "description": state.get("use_case_description"),
+            "source_run_id": entry.get("source_run_id"),
             "status": entry["status"],
             "created_at": entry["created_at"],
             "elapsed_seconds": round(end_time - entry["created_at"], 1),
@@ -431,6 +432,51 @@ async def create_run(
     return {"run_id": run_id, "status": "profiling"}
 
 
+class ExperimentRequest(BaseModel):
+    description: str
+
+
+@app.post("/api/runs/{run_id}/experiments")
+def create_experiment(
+    run_id: str, body: ExperimentRequest, _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
+    """Start a new experiment on an existing run's dataset — no re-upload.
+    Reuses the source run's already-computed profile when present (intake's
+    profile_node skips re-profiling), re-infers the task spec from the new
+    description, and pauses at the standard confirm checkpoint like any
+    fresh run. See docs/superpowers/specs/2026-07-06-multi-experiment-design.md."""
+    source = _get_entry(run_id)
+    description = body.description.strip()
+    if not description:
+        raise HTTPException(status_code=400, detail="description must not be empty")
+    dataset_path = source["state"].get("dataset_path")
+    if not dataset_path or not Path(dataset_path).exists():
+        raise HTTPException(
+            status_code=409, detail="the source run's dataset file is no longer available — please re-upload it"
+        )
+
+    new_id = str(uuid.uuid4())[:8]
+    state = new_state(run_id=new_id, dataset_path=dataset_path, use_case_description=description)
+    source_profile = source["state"].get("profile")
+    if source_profile:
+        state["profile"] = source_profile
+    with _lock:
+        _runs[new_id] = {
+            "state": state,
+            "status": "profiling",
+            "events": [],
+            "filename": source["filename"],
+            "created_at": time.time(),
+            "finished_at": None,
+            "cancel_requested": False,
+            "chat_history": [],
+            "source_run_id": run_id,
+        }
+
+    threading.Thread(target=_run_intake, args=(new_id,), daemon=True).start()
+    return {"run_id": new_id, "status": "profiling"}
+
+
 @app.get("/api/runs")
 def list_runs(_session: dict[str, Any] = Depends(require_session)) -> list[dict[str, Any]]:
     with _lock:
@@ -443,6 +489,7 @@ def list_runs(_session: dict[str, Any] = Depends(require_session)) -> list[dict[
                 "description": entry["state"].get("use_case_description"),
                 "best_score": _best_score(entry),
                 "metric": (entry["state"].get("task_spec") or {}).get("metric"),
+                "source_run_id": entry.get("source_run_id"),
             }
             for run_id, entry in sorted(_runs.items(), key=lambda kv: -kv[1]["created_at"])
         ]

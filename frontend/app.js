@@ -136,6 +136,8 @@ function showIntakeView() {
   $("run-desc").textContent = "Upload data, describe your goal, get a model — explained.";
   $("status-badge").classList.add("hidden");
   $("cancel-btn").classList.add("hidden");
+  $("rerun-btn").classList.add("hidden");
+  $("rerun-card").classList.add("hidden");
   selectedFile = null;
   dropzone.classList.remove("has-file");
   $("dropzone-label").innerHTML = "<strong>Drop a CSV here</strong> or click to browse";
@@ -216,6 +218,7 @@ function renderHome(runs) {
           <span class="home-project-desc">${escapeHtml(r.description || "")}</span>
         </span>
         <span class="home-project-meta">
+          ${r.source_run_id ? `<span class="muted small" title="New experiment on the dataset from run ${escapeHtml(r.source_run_id)}">re-run</span>` : ""}
           ${r.best_score != null ? `<span class="home-project-score mono">${escapeHtml(r.metric)}: ${r.best_score.toFixed(3)}</span>` : ""}
           <span class="status-badge ${r.status}">${r.status.replaceAll("_", " ")}</span>
           <span class="home-project-time">${relativeTime(r.created_at)}</span>
@@ -340,6 +343,43 @@ $("new-run-form").addEventListener("submit", async (e) => {
   }
 });
 
+/* ================= re-run dataset (multi-experiment) ================= */
+
+$("rerun-btn").addEventListener("click", () => {
+  $("rerun-card").classList.toggle("hidden");
+  if (!$("rerun-card").classList.contains("hidden")) $("rerun-description").focus();
+});
+
+$("rerun-close-btn").addEventListener("click", () => {
+  $("rerun-card").classList.add("hidden");
+});
+
+$("rerun-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const description = $("rerun-description").value.trim();
+  if (!description || !currentRunId) return;
+  const btn = $("rerun-submit-btn");
+  btn.disabled = true;
+  btn.textContent = "Starting…";
+  try {
+    const res = await authFetch(`/api/runs/${currentRunId}/experiments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const { run_id } = await res.json();
+    $("rerun-card").classList.add("hidden");
+    $("rerun-description").value = "";
+    openRun(run_id);
+  } catch (err) {
+    alert("Failed to start experiment: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Start experiment";
+  }
+});
+
 $("cancel-btn").addEventListener("click", async () => {
   if (!confirm("Cancel this run? Work completed so far is kept, but no further stages will run.")) return;
   try {
@@ -354,6 +394,7 @@ function openRun(runId) {
   currentRunStatus = null;
   lastRun = null;
   showRunView();
+  $("rerun-card").classList.add("hidden");
   $("trace-details").classList.add("hidden");
   $("trace-body").textContent = "";
   predictFormLoadedFor = null;
@@ -393,9 +434,12 @@ function render(run) {
   lastRun = run;
   currentRunStatus = run.status;
 
-  $("header-eyebrow").textContent = `Run ${run.run_id}`;
+  $("header-eyebrow").textContent = run.source_run_id
+    ? `Run ${run.run_id} · re-run of ${run.source_run_id}`
+    : `Run ${run.run_id}`;
   $("run-title").textContent = run.filename;
   $("run-desc").textContent = run.description || "";
+  $("rerun-btn").classList.remove("hidden");
 
   const badge = $("status-badge");
   badge.classList.remove("hidden");
