@@ -816,3 +816,7 @@ select, textarea, input[type="text"], input[type="number"] {
 .explorer-bar { flex: 1; background: var(--accent-primary); border-radius: 2px 2px 0 0; min-height: 1px; }
 .explorer-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; font-size: var(--text-xs); color: var(--text-secondary); margin-bottom: var(--sp-3); }
 .explorer-stats strong { color: var(--text-primary); font-family: var(--font-mono); }
+
+/* ================= correlations / missing-values heatmaps ================= */
+
+.heatmap-scroll { overflow: auto; max-width: 100%; }

@@ -316,6 +316,67 @@ function renderColumnSummaryTab(run) {
   $("ptab-summary-panel").dataset.loaded = "1";
 }
 
+/* ================= correlations sub-tab ================= */
+
+function renderCorrelationHeatmap(container, result) {
+  const { columns, matrix } = result;
+  if (!columns.length || !matrix.length) {
+    container.innerHTML = `<p class="muted small">Not enough numeric columns for a correlation matrix.</p>`;
+    return;
+  }
+  const cell = 34;
+  let html = "";
+  if (result.truncated) {
+    html += `<p class="muted small">Showing the top ${columns.length} numeric columns by variance (dataset has more).</p>`;
+  }
+  html += `<div class="heatmap-scroll"><svg width="${cell * (columns.length + 1)}" height="${cell * (columns.length + 1)}" role="img" aria-label="Correlation heatmap">`;
+  columns.forEach((name, i) => {
+    html += `<text x="${cell * (i + 1) + cell / 2}" y="${cell * 0.9}" font-size="9" text-anchor="middle" transform="rotate(-45 ${cell * (i + 1) + cell / 2} ${cell * 0.9})">${escapeHtml(name)}</text>`;
+    html += `<text x="${cell * 0.95}" y="${cell * (i + 1) + cell / 2 + 3}" font-size="9" text-anchor="end">${escapeHtml(name)}</text>`;
+  });
+  matrix.forEach((row, i) => {
+    row.forEach((value, j) => {
+      const intensity = Math.min(Math.abs(value), 1);
+      const color = value >= 0 ? `rgba(124, 58, 237, ${intensity})` : `rgba(220, 38, 38, ${intensity})`;
+      html += `<rect x="${cell * (j + 1)}" y="${cell * (i + 1)}" width="${cell}" height="${cell}" fill="${color}"><title>${escapeHtml(columns[i])} × ${escapeHtml(columns[j])}: ${value.toFixed(2)}</title></rect>`;
+    });
+  });
+  html += "</svg></div>";
+  container.innerHTML = html;
+}
+
+async function loadCorrelationsTab() {
+  const panel = $("ptab-correlations-panel");
+  panel.innerHTML = `
+    <div class="chip-row">
+      <label class="field" style="max-width:200px">
+        <span class="visually-hidden">Correlation method</span>
+        <select id="correlation-method-select">
+          <option value="pearson">Pearson</option>
+          <option value="spearman">Spearman</option>
+          <option value="kendall">Kendall</option>
+          <option value="mutual_info">Mutual Information</option>
+        </select>
+      </label>
+    </div>
+    <div id="correlation-heatmap-box"><p class="muted small">Loading…</p></div>`;
+  panel.dataset.loaded = "1";
+
+  const fetchAndRender = async () => {
+    const method = $("correlation-method-select").value;
+    let result;
+    try {
+      result = await (await authFetch(`/api/runs/${currentDatasetRunId}/correlations?method=${method}`)).json();
+    } catch {
+      $("correlation-heatmap-box").innerHTML = `<p class="muted small">Could not load correlations.</p>`;
+      return;
+    }
+    renderCorrelationHeatmap($("correlation-heatmap-box"), result);
+  };
+  $("correlation-method-select").addEventListener("change", fetchAndRender);
+  await fetchAndRender();
+}
+
 /* ================= interactive preview table ================= */
 
 function classifyPreviewType(dtype) {
