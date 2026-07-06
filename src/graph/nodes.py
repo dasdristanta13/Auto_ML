@@ -142,7 +142,10 @@ def _apply_builtin_step(df: pd.DataFrame, op: str, columns: list[str], params: d
     elif op == "encode":
         method = params.get("method", "onehot")
         if method == "onehot":
-            df = pd.get_dummies(df, columns=columns, dummy_na=False)
+            # dtype="int8": pandas >= 2.0 defaults dummy columns to bool, which
+            # sklearn's SimpleImputer rejects outright — and the bool dtype
+            # survives the CSV round-trip into the training job.
+            df = pd.get_dummies(df, columns=columns, dummy_na=False, dtype="int8")
         elif method == "ordinal":
             encoder = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)
             df[columns] = encoder.fit_transform(df[columns].astype(str))

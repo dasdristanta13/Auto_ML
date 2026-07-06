@@ -202,6 +202,9 @@ def _build_preprocessor(steps: list[dict[str, Any]], X: pd.DataFrame) -> ColumnT
     """
     columns = list(X.columns)
     numeric_cols = [c for c in columns if pd.api.types.is_numeric_dtype(X[c])]
+    categorical_cols = [
+        c for c in columns if isinstance(X[c].dtype, pd.CategoricalDtype) or X[c].dtype in ("object", "string")
+    ]
 
     impute_strategy: dict[str, str] = {}
     scale_method: dict[str, str] = {}
@@ -245,6 +248,19 @@ def _build_preprocessor(steps: list[dict[str, Any]], X: pd.DataFrame) -> ColumnT
                 stages.append(("scale", _SCALERS[scale]()))
             stages.append(("impute", SimpleImputer(strategy="constant", fill_value=0.0)))
         transformers.append((f"num_{i}", Pipeline(stages), group_cols))
+
+    if not transformers and not target_encode_cols:
+        # a dataset with no numeric features (all-categorical, e.g. mushroom-
+        # style data) would otherwise produce a ZERO-column matrix and fail
+        # every fit of every candidate ("model is misconfigured"). Fall back
+        # to target-encoding the categorical columns instead of training on
+        # nothing; TargetEncoder cross-fits internally so this stays
+        # leakage-safe even for high-cardinality columns.
+        target_encode_cols = list(categorical_cols)
+        if not target_encode_cols:
+            raise ValueError(
+                "no usable feature columns: dataset has no numeric or categorical features to train on"
+            )
 
     if target_encode_cols:
         # default cv/shuffle settings: sklearn 1.9 deprecated random_state
@@ -334,7 +350,14 @@ def _cross_validate(
         scoring = _CV_REGRESSION_SCORERS
         sign_flip = _CV_REGRESSION_SIGN_FLIP
 
-    scores = cross_validate(clone(estimator), X, y, cv=splitter, scoring=scoring)
+    # error_score="raise" so a failing fold surfaces its REAL exception —
+    # the default (nan) buries it under sklearn's "model is misconfigured"
+    # warning and NaN metrics. The caller degrades gracefully: holdout
+    # training still proceeds, with the cause recorded in cv_note.
+    try:
+        scores = cross_validate(clone(estimator), X, y, cv=splitter, scoring=scoring, error_score="raise")
+    except Exception as exc:  # noqa: BLE001 - any fold error degrades to "CV unavailable", not a dead job
+        return {"folds": 0, "metrics": {}, "note": f"cross-validation failed: {exc}"}
 
     metrics: dict[str, Any] = {}
     for name in scoring:
@@ -602,6 +625,37 @@ def _run_job(
         if df.empty:
             raise ValueError(f"target column '{target_column}' has no non-null values")
 
+        # bool/int feature columns count as numeric to pandas but trip modern
+        # sklearn dtype validation: SimpleImputer refuses bool input outright,
+        # and refuses a float fill_value (the pipeline's constant-0.0 stage)
+        # on int64 input. Cast both to float64 — estimators convert to float
+        # internally anyway, and float holds NaN, so nullable bool/Int64
+        # columns with missing values cast cleanly too. The target column is
+        # left alone so classification labels stay as-is.
+        cast_cols = [
+            c
+            for c in df.columns
+            if c != target_column
+            and (pd.api.types.is_bool_dtype(df[c]) or pd.api.types.is_integer_dtype(df[c]))
+        ]
+        if cast_cols:
+            df = df.copy()
+            df[cast_cols] = df[cast_cols].astype("float64")
+        if pd.api.types.is_bool_dtype(df[target_column]):
+            df = df.copy()
+            df[target_column] = df[target_column].astype("int64")
+
+        # ±inf (divide-by-zero artifacts, sentinel values) fails estimator
+        # fit with "Input contains infinity" — treat as missing so the
+        # pipeline's imputers handle it like any other NaN.
+        float_cols = [c for c in df.columns if pd.api.types.is_float_dtype(df[c])]
+        if float_cols and np.isinf(df[float_cols].to_numpy()).any():
+            df = df.copy()
+            df[float_cols] = df[float_cols].replace([np.inf, -np.inf], np.nan)
+            df = df.dropna(subset=[target_column])
+            if df.empty:
+                raise ValueError(f"target column '{target_column}' has no finite values")
+
         label_encoder = None
         y_full = df[target_column]
         if task_type == "classification" and not pd.api.types.is_numeric_dtype(y_full):
@@ -652,20 +706,34 @@ def _run_job(
 
         if tuning_enabled:
             cfg = _runtime_config()
-            final_params, tuning_info = _tune_pipeline(
-                run_id,
-                _make_pipeline,
-                hyperparams,
-                library,
-                estimator_name,
-                X_train,
-                y_train,
-                task_type,
-                tuning_metric,
-                time_column,
-                tuning_trials if tuning_trials is not None else cfg["tuning_trials"],
-                cfg["hyperparam_search_budget_seconds"],
-            )
+            try:
+                final_params, tuning_info = _tune_pipeline(
+                    run_id,
+                    _make_pipeline,
+                    hyperparams,
+                    library,
+                    estimator_name,
+                    X_train,
+                    y_train,
+                    task_type,
+                    tuning_metric,
+                    time_column,
+                    tuning_trials if tuning_trials is not None else cfg["tuning_trials"],
+                    cfg["hyperparam_search_budget_seconds"],
+                )
+            except Exception as exc:  # noqa: BLE001 - tuning is an optimization, never a reason to fail the run
+                final_params = dict(hyperparams)
+                tuning_info = {
+                    "enabled": False,
+                    "trials_total": 0,
+                    "trials_done": 0,
+                    "metric": None,
+                    "lower_is_better": False,
+                    "best_params": {},
+                    "history": [],
+                    "note": f"tuning skipped after error, trained with proposed hyperparameters: {exc}",
+                }
+                _registry[run_id]["tuning"] = dict(tuning_info)
         else:
             final_params = dict(hyperparams)
             tuning_info = {
