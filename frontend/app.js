@@ -130,6 +130,7 @@ function showIntakeView() {
   stopPolling();
   currentRunId = null;
   $("run-view").classList.add("hidden");
+  $("datasets-view").classList.add("hidden");
   $("intake-view").classList.remove("hidden");
   setActiveNav("nav-new");
   $("header-eyebrow").textContent = "Agentic AutoML";
@@ -150,6 +151,7 @@ function showIntakeView() {
 
 function showRunView() {
   $("intake-view").classList.add("hidden");
+  $("datasets-view").classList.add("hidden");
   $("run-view").classList.remove("hidden");
   setActiveNav("nav-dashboard");
 }
