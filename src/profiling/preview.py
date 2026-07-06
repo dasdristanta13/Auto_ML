@@ -142,7 +142,7 @@ def correlation_matrix(df: pd.DataFrame, method: str = "pearson") -> dict[str, A
         subset = df[numeric_cols].dropna()
         n = len(numeric_cols)
         matrix = [[0.0] * n for _ in range(n)]
-        if len(subset) >= 2:
+        if len(subset) > 3:
             for i, col_a in enumerate(numeric_cols):
                 other_cols = [c for c in numeric_cols if c != col_a]
                 mi = mutual_info_regression(subset[other_cols], subset[col_a], random_state=0)

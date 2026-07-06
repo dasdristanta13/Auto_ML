@@ -131,3 +131,30 @@ def test_correlation_matrix_handles_fewer_than_two_numeric_columns():
     df = pd.DataFrame({"x": [1, 2, 3], "z": ["a", "b", "c"]})
     result = correlation_matrix(df, method="pearson")
     assert result["matrix"] == []
+
+
+def test_correlation_matrix_mutual_info_degrades_gracefully_on_tiny_subset():
+    # After dropna(), only 2 rows remain in common between x and y — too few
+    # for mutual_info_regression's default n_neighbors=3, which would raise.
+    df = pd.DataFrame(
+        {
+            "x": [1.0, 2.0, None, None, None],
+            "y": [None, 3.0, 4.0, None, None],
+        }
+    )
+    result = correlation_matrix(df, method="mutual_info")
+    assert result["matrix"][0][0] == 1.0
+    assert result["matrix"][1][1] == 1.0
+    assert result["matrix"][0][1] == 0.0
+    assert result["matrix"][1][0] == 0.0
+
+
+def test_correlation_matrix_truncates_to_max_columns_by_variance():
+    data = {f"col{i}": [i] * 5 for i in range(55)}
+    # Give one column a much larger variance so it's guaranteed to survive truncation.
+    data["high_var"] = [0, 1000, -1000, 500, -500]
+    df = pd.DataFrame(data)
+    result = correlation_matrix(df, method="pearson")
+    assert result["truncated"] is True
+    assert len(result["columns"]) == 50
+    assert "high_var" in result["columns"]
