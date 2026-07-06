@@ -34,6 +34,7 @@ from sklearn.metrics import (
 )
 from sklearn.base import clone
 from sklearn.compose import ColumnTransformer
+from sklearn.feature_selection import RFECV
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import (
     KFold,
@@ -154,6 +155,32 @@ def _sanitize_hyperparams(estimator_cls: type, hyperparams: dict[str, Any]) -> d
             sanitized[param] = value_map[sanitized[param]][kind]
 
     return sanitized
+
+
+def _fix_target_incompatibilities(
+    estimator_name: str, hyperparams: dict[str, Any], task_type: str, n_classes: int
+) -> tuple[dict[str, Any], Optional[str]]:
+    """Repairs hyperparameters that are individually valid but jointly invalid
+    with THIS dataset's target — something _sanitize_hyperparams can't catch
+    because it never sees the data. Returns (params, note); note explains any
+    change so the run surfaces it instead of silently differing from the plan.
+
+    Known case: LogisticRegression solver='liblinear' is binary-only (sklearn
+    >= 1.7 removed its OvR multiclass path), so a plausible LLM proposal fails
+    every fit on a 3+-class target. Swap to the closest multiclass-capable
+    solver: 'saga' when the penalty needs it (l1/elasticnet), else 'lbfgs';
+    'dual' is liblinear-specific and dropped alongside."""
+    if estimator_name == "LogisticRegression" and task_type == "classification" and n_classes >= 3:
+        if hyperparams.get("solver") == "liblinear":
+            fixed = dict(hyperparams)
+            fixed.pop("dual", None)
+            fixed["solver"] = "saga" if fixed.get("penalty") in ("l1", "elasticnet") else "lbfgs"
+            note = (
+                f"solver 'liblinear' does not support {n_classes}-class classification; "
+                f"switched to '{fixed['solver']}'"
+            )
+            return fixed, note
+    return hyperparams, None
 
 
 def _build_estimator(library: str, estimator: str, hyperparams: dict[str, Any]):
@@ -608,6 +635,154 @@ def _build_resampler(method: str, y: pd.Series) -> tuple[Optional[Any], Optional
     return None, None, None
 
 
+def _load_training_frame(
+    dataset_path: str, target_column: str, task_type: str
+) -> tuple[pd.DataFrame, Optional[LabelEncoder]]:
+    """Shared load + normalization path for anything that fits on the dataset
+    (training jobs AND the one-shot feature-selection pass), so they can never
+    drift apart on dtype handling. Returns (frame, label_encoder)."""
+    df = load_dataset(dataset_path)
+    if target_column not in df.columns:
+        raise ValueError(
+            f"target column '{target_column}' not found in dataset (available: {list(df.columns)[:30]})"
+        )
+    df = df.dropna(subset=[target_column])
+    if df.empty:
+        raise ValueError(f"target column '{target_column}' has no non-null values")
+
+    # bool/int feature columns count as numeric to pandas but trip modern
+    # sklearn dtype validation: SimpleImputer refuses bool input outright,
+    # and refuses a float fill_value (the pipeline's constant-0.0 stage)
+    # on int64 input. Cast both to float64 — estimators convert to float
+    # internally anyway, and float holds NaN, so nullable bool/Int64
+    # columns with missing values cast cleanly too. The target column is
+    # left alone so classification labels stay as-is.
+    cast_cols = [
+        c
+        for c in df.columns
+        if c != target_column
+        and (pd.api.types.is_bool_dtype(df[c]) or pd.api.types.is_integer_dtype(df[c]))
+    ]
+    if cast_cols:
+        df = df.copy()
+        df[cast_cols] = df[cast_cols].astype("float64")
+    if pd.api.types.is_bool_dtype(df[target_column]):
+        df = df.copy()
+        df[target_column] = df[target_column].astype("int64")
+
+    # ±inf (divide-by-zero artifacts, sentinel values) fails estimator
+    # fit with "Input contains infinity" — treat as missing so the
+    # pipeline's imputers handle it like any other NaN.
+    float_cols = [c for c in df.columns if pd.api.types.is_float_dtype(df[c])]
+    if float_cols and np.isinf(df[float_cols].to_numpy()).any():
+        df = df.copy()
+        df[float_cols] = df[float_cols].replace([np.inf, -np.inf], np.nan)
+        df = df.dropna(subset=[target_column])
+        if df.empty:
+            raise ValueError(f"target column '{target_column}' has no finite values")
+
+    label_encoder = None
+    y_full = df[target_column]
+    if task_type == "classification" and not pd.api.types.is_numeric_dtype(y_full):
+        label_encoder = LabelEncoder()
+        df = df.copy()
+        df[target_column] = label_encoder.fit_transform(y_full.astype(str))
+    elif task_type == "regression" and not pd.api.types.is_numeric_dtype(y_full):
+        # numbers frequently arrive as strings ("1,234", "$50.00", " 3.5 ");
+        # strip common formatting and coerce rather than crashing the fit
+        # with an opaque sklearn dtype error. Rows that still don't parse
+        # are dropped; an entirely unparseable target is a clear error.
+        coerced = pd.to_numeric(
+            y_full.astype(str).str.strip().str.replace(r"[,$€£%]", "", regex=True), errors="coerce"
+        )
+        if coerced.notna().sum() == 0:
+            raise ValueError(
+                f"target column '{target_column}' is non-numeric and could not be parsed as numbers; "
+                "a regression target must be numeric — pick a different column or task type"
+            )
+        df = df.copy()
+        df[target_column] = coerced
+        df = df.dropna(subset=[target_column])
+
+    return df, label_encoder
+
+
+_MIN_FEATURES_FOR_RFE = 5
+
+
+def select_features(
+    dataset_path: str,
+    target_column: str,
+    task_type: str,
+    time_column: Optional[str],
+    preprocess_steps: Optional[list[dict[str, Any]]],
+    metric: Optional[str],
+) -> dict[str, Any]:
+    """One-shot recursive feature elimination with a very basic linear model
+    (LogisticRegression / Ridge), run BEFORE candidates are dispatched; the
+    selected subset is then shared by every candidate so all models train on
+    the same feature space (see 2026-07-06-eda-drops-and-rfe-design.md,
+    revision). Fits on the deterministic training split only — _split with
+    the same arguments reproduces exactly the split each job will use, so
+    selection never sees any job's held-out rows. Never raises: returns
+    enabled=False with an explanatory note instead, and candidates fall back
+    to training on all features."""
+    info: dict[str, Any] = {
+        "enabled": False,
+        "basic_model": None,
+        "n_features_total": None,
+        "n_features_selected": None,
+        "selected_features": [],
+        "note": None,
+    }
+    try:
+        df, _ = _load_training_frame(dataset_path, target_column, task_type)
+        X_train, _, y_train, _ = _split(df, target_column, task_type, time_column)
+        info["n_features_total"] = int(X_train.shape[1])
+
+        if X_train.shape[1] < _MIN_FEATURES_FOR_RFE:
+            info["note"] = (
+                f"feature selection skipped: only {X_train.shape[1]} feature column(s) — too few to "
+                "meaningfully eliminate"
+            )
+            return info
+        splitter = _tuning_splitter(task_type, y_train, time_column)
+        if splitter is None:
+            info["note"] = "feature selection skipped: not enough samples per class/fold for its internal CV"
+            return info
+        _, scoring, _ = _tuning_scoring(task_type, metric, y_train)
+
+        import sklearn.linear_model as lm
+
+        if task_type == "classification":
+            basic, info["basic_model"] = lm.LogisticRegression(max_iter=1000), "LogisticRegression"
+        else:
+            basic, info["basic_model"] = lm.Ridge(), "Ridge"
+
+        prep = _build_preprocessor(preprocess_steps or [], X_train)
+        pipe = Pipeline(
+            [
+                ("prep", prep),
+                ("rfe", RFECV(estimator=basic, step=0.2, cv=splitter, scoring=scoring, min_features_to_select=1)),
+            ]
+        )
+        pipe.fit(X_train, y_train)
+
+        # preprocessor output names map 1:1 to raw column names (one-hot runs
+        # upstream in apply_feature_plan; verbose_feature_names_out=False), so
+        # the selected names are directly usable as job column subsets.
+        names = [str(n) for n in pipe.named_steps["prep"].get_feature_names_out()]
+        support = pipe.named_steps["rfe"].support_
+        selected = [name for name, keep in zip(names, support) if keep]
+        info["enabled"] = True
+        info["n_features_total"] = len(names)
+        info["n_features_selected"] = len(selected)
+        info["selected_features"] = selected
+    except Exception as exc:  # noqa: BLE001 - selection is an optimization, never a reason to block training
+        info["note"] = f"feature selection skipped after error: {exc}"
+    return info
+
+
 def _run_job(
     run_id: str,
     dataset_path: str,
@@ -625,74 +800,35 @@ def _run_job(
     tuning_enabled: bool,
     tuning_trials: Optional[int],
     tuning_metric: Optional[str],
+    selected_features: Optional[list[str]] = None,
+    feature_selection_note: Optional[str] = None,
 ) -> None:
     start = time.monotonic()
     _registry[run_id]["status"] = "running"
     try:
-        df = load_dataset(dataset_path)
-        if target_column not in df.columns:
-            raise ValueError(
-                f"target column '{target_column}' not found in dataset (available: {list(df.columns)[:30]})"
+        df, label_encoder = _load_training_frame(dataset_path, target_column, task_type)
+
+        if task_type == "classification":
+            n_classes = int(df[target_column].nunique())
+            hyperparams, compat_note = _fix_target_incompatibilities(
+                estimator_name, hyperparams, task_type, n_classes
             )
-        df = df.dropna(subset=[target_column])
-        if df.empty:
-            raise ValueError(f"target column '{target_column}' has no non-null values")
-
-        # bool/int feature columns count as numeric to pandas but trip modern
-        # sklearn dtype validation: SimpleImputer refuses bool input outright,
-        # and refuses a float fill_value (the pipeline's constant-0.0 stage)
-        # on int64 input. Cast both to float64 — estimators convert to float
-        # internally anyway, and float holds NaN, so nullable bool/Int64
-        # columns with missing values cast cleanly too. The target column is
-        # left alone so classification labels stay as-is.
-        cast_cols = [
-            c
-            for c in df.columns
-            if c != target_column
-            and (pd.api.types.is_bool_dtype(df[c]) or pd.api.types.is_integer_dtype(df[c]))
-        ]
-        if cast_cols:
-            df = df.copy()
-            df[cast_cols] = df[cast_cols].astype("float64")
-        if pd.api.types.is_bool_dtype(df[target_column]):
-            df = df.copy()
-            df[target_column] = df[target_column].astype("int64")
-
-        # ±inf (divide-by-zero artifacts, sentinel values) fails estimator
-        # fit with "Input contains infinity" — treat as missing so the
-        # pipeline's imputers handle it like any other NaN.
-        float_cols = [c for c in df.columns if pd.api.types.is_float_dtype(df[c])]
-        if float_cols and np.isinf(df[float_cols].to_numpy()).any():
-            df = df.copy()
-            df[float_cols] = df[float_cols].replace([np.inf, -np.inf], np.nan)
-            df = df.dropna(subset=[target_column])
-            if df.empty:
-                raise ValueError(f"target column '{target_column}' has no finite values")
-
-        label_encoder = None
-        y_full = df[target_column]
-        if task_type == "classification" and not pd.api.types.is_numeric_dtype(y_full):
-            label_encoder = LabelEncoder()
-            df = df.copy()
-            df[target_column] = label_encoder.fit_transform(y_full.astype(str))
-        elif task_type == "regression" and not pd.api.types.is_numeric_dtype(y_full):
-            # numbers frequently arrive as strings ("1,234", "$50.00", " 3.5 ");
-            # strip common formatting and coerce rather than crashing the fit
-            # with an opaque sklearn dtype error. Rows that still don't parse
-            # are dropped; an entirely unparseable target is a clear error.
-            coerced = pd.to_numeric(
-                y_full.astype(str).str.strip().str.replace(r"[,$€£%]", "", regex=True), errors="coerce"
-            )
-            if coerced.notna().sum() == 0:
-                raise ValueError(
-                    f"target column '{target_column}' is non-numeric and could not be parsed as numbers; "
-                    "a regression target must be numeric — pick a different column or task type"
-                )
-            df = df.copy()
-            df[target_column] = coerced
-            df = df.dropna(subset=[target_column])
+            if compat_note:
+                _registry[run_id]["hyperparam_note"] = compat_note
 
         X_train, X_test, y_train, y_test = _split(df, target_column, task_type, time_column)
+
+        # feature selection ran ONCE upstream (select_features, basic linear
+        # model) — every candidate trains on the same shared subset, applied
+        # here right after the split. Columns missing from this job's frame
+        # are ignored defensively rather than raising.
+        n_features_before = int(X_train.shape[1])
+        fs_applied: Optional[list[str]] = None
+        if selected_features:
+            keep = [c for c in X_train.columns if c in set(selected_features)]
+            if keep:
+                X_train, X_test = X_train[keep], X_test[keep]
+                fs_applied = keep
 
         # statistical preprocessing (impute/scale/target-encode) lives INSIDE
         # the fitted pipeline so it is fit on the training fold only — and
@@ -779,9 +915,19 @@ def _run_job(
 
         metrics = _evaluate(task_type, y_test, y_pred, y_proba)
         fitted_prep = fit_estimator.named_steps["prep"]
-        feature_importance = _feature_importance(
-            fit_estimator.named_steps["model"], [str(name) for name in fitted_prep.get_feature_names_out()]
-        )
+        feature_names = [str(name) for name in fitted_prep.get_feature_names_out()]
+
+        fs_info: dict[str, Any] = {
+            "enabled": fs_applied is not None,
+            "n_features_total": n_features_before,
+            "n_features_selected": len(fs_applied) if fs_applied is not None else None,
+            "selected_features": fs_applied or [],
+            "note": feature_selection_note,
+        }
+
+        # X_train is already the selected subset, so the fitted preprocessor's
+        # output names ARE the selected feature space
+        feature_importance = _feature_importance(fit_estimator.named_steps["model"], feature_names)
 
         # feature_columns/feature_types describe the RAW model inputs (the
         # pipeline transforms them itself) — this is what the predict form
@@ -813,6 +959,7 @@ def _run_job(
             resampling_applied=resampling_applied,
             resampling_note=resampling_note,
             tuning=tuning_info,
+            feature_selection=fs_info,
         )
     except Exception as exc:  # noqa: BLE001 - failure surfaced via registry, not raised across the thread boundary
         _registry[run_id].update(
@@ -840,6 +987,8 @@ def train_model(
     tuning_enabled: bool = True,
     tuning_trials: Optional[int] = None,
     tuning_metric: Optional[str] = None,
+    selected_features: Optional[list[str]] = None,
+    feature_selection_note: Optional[str] = None,
 ) -> str:
     """Dispatch an async training job for one candidate model and return its
     run_id IMMEDIATELY (does not block on training completion). Use
@@ -863,6 +1012,13 @@ def train_model(
     should be the task spec's metric): the proposed `hyperparams` are scored
     as the baseline trial 0 and the best configuration wins, with per-trial
     progress visible via poll_training_job's `tuning` field.
+    `selected_features` is the shared feature subset chosen by a single
+    upstream recursive-feature-elimination pass with a basic linear model
+    (select_features) — when given, this job trains on exactly those columns
+    so every candidate sees the same feature space; when None, all features
+    are used. `feature_selection_note` carries the upstream pass's skip
+    explanation, if any; both are echoed via poll_training_job's
+    `feature_selection` field.
     """
     run_id = str(uuid.uuid4())
     _registry[run_id] = {
@@ -888,6 +1044,13 @@ def train_model(
             "history": [],
             "note": None,
         },
+        "feature_selection": {
+            "enabled": False,
+            "n_features_total": None,
+            "n_features_selected": None,
+            "selected_features": [],
+            "note": None,
+        },
     }
     future = _get_executor().submit(
         _run_job,
@@ -907,6 +1070,8 @@ def train_model(
         tuning_enabled,
         tuning_trials,
         tuning_metric,
+        selected_features,
+        feature_selection_note,
     )
     _futures[run_id] = future
     return run_id
