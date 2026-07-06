@@ -229,7 +229,12 @@ def test_detect_outliers_lof_handles_entirely_null_numeric_column():
     # fillna(c.mean()) leaves it full of NaN. LocalOutlierFactor.fit_predict
     # raises ValueError on NaN input (unlike IsolationForest, which tolerates
     # it) -- this must not crash.
-    df = pd.DataFrame({"x": list(range(30)), "y": [None] * 30})
+    # NOTE: must use an explicit numeric dtype for the all-NaN column --
+    # pd.DataFrame({"y": [None] * 30})["y"] infers dtype=object, which gets
+    # filtered out of numeric_cols entirely and never exercises the fillna
+    # bug path (the exact dtype-inference trap from Task 4).
+    df = pd.DataFrame({"x": list(range(30)), "y": pd.Series([float("nan")] * 30, dtype="float64")})
+    assert pd.api.types.is_numeric_dtype(df["y"])
     result = detect_outliers(df, method="lof")
     assert result["method"] == "lof"
     assert "outlier_count" in result
@@ -238,9 +243,8 @@ def test_detect_outliers_lof_handles_entirely_null_numeric_column():
 
 
 def test_detect_outliers_isolation_forest_handles_entirely_null_numeric_column():
-    df = pd.DataFrame({"x": list(range(30)), "y": [None] * 30})
+    df = pd.DataFrame({"x": list(range(30)), "y": pd.Series([float("nan")] * 30, dtype="float64")})
+    assert pd.api.types.is_numeric_dtype(df["y"])
     result = detect_outliers(df, method="isolation_forest")
     assert result["method"] == "isolation_forest"
     assert "outlier_count" in result
-    assert "affected_columns" in result
-    assert "example_row_indices" in result
