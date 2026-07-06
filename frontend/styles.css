@@ -820,3 +820,4 @@ select, textarea, input[type="text"], input[type="number"] {
 /* ================= correlations / missing-values heatmaps ================= */
 
 .heatmap-scroll { overflow: auto; max-width: 100%; }
+.missing-corr-title { font-size: var(--text-sm); font-weight: 650; margin: var(--sp-3) 0 var(--sp-2); }

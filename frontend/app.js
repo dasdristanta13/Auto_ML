@@ -318,10 +318,12 @@ function renderColumnSummaryTab(run) {
 
 /* ================= correlations sub-tab ================= */
 
-function renderCorrelationHeatmap(container, result) {
+function renderCorrelationHeatmap(container, result, options = {}) {
   const { columns, matrix } = result;
+  const emptyMessage = options.emptyMessage || "Not enough numeric columns for a correlation matrix.";
+  const ariaLabel = options.ariaLabel || "Correlation heatmap";
   if (!columns.length || !matrix.length) {
-    container.innerHTML = `<p class="muted small">Not enough numeric columns for a correlation matrix.</p>`;
+    container.innerHTML = `<p class="muted small">${escapeHtml(emptyMessage)}</p>`;
     return;
   }
   const cell = 34;
@@ -329,7 +331,7 @@ function renderCorrelationHeatmap(container, result) {
   if (result.truncated) {
     html += `<p class="muted small">Showing the top ${columns.length} numeric columns by variance (dataset has more).</p>`;
   }
-  html += `<div class="heatmap-scroll"><svg width="${cell * (columns.length + 1)}" height="${cell * (columns.length + 1)}" role="img" aria-label="Correlation heatmap">`;
+  html += `<div class="heatmap-scroll"><svg width="${cell * (columns.length + 1)}" height="${cell * (columns.length + 1)}" role="img" aria-label="${escapeHtml(ariaLabel)}">`;
   columns.forEach((name, i) => {
     html += `<text x="${cell * (i + 1) + cell / 2}" y="${cell * 0.9}" font-size="9" text-anchor="middle" transform="rotate(-45 ${cell * (i + 1) + cell / 2} ${cell * 0.9})">${escapeHtml(name)}</text>`;
     html += `<text x="${cell * 0.95}" y="${cell * (i + 1) + cell / 2 + 3}" font-size="9" text-anchor="end">${escapeHtml(name)}</text>`;
@@ -375,6 +377,42 @@ async function loadCorrelationsTab() {
   };
   $("correlation-method-select").addEventListener("change", fetchAndRender);
   await fetchAndRender();
+}
+
+/* ================= missing values sub-tab ================= */
+
+async function loadMissingValuesTab() {
+  const panel = $("ptab-missing-panel");
+  panel.innerHTML = `<p class="muted small">Loading…</p>`;
+  panel.dataset.loaded = "1";
+
+  let result;
+  try {
+    result = await (await authFetch(`/api/runs/${currentDatasetRunId}/missing-values`)).json();
+  } catch {
+    panel.innerHTML = `<p class="muted small">Could not load missing-value analysis.</p>`;
+    return;
+  }
+
+  const rows = result.per_column.filter((r) => r.null_count > 0).sort((a, b) => b.null_rate - a.null_rate);
+  let html = `<div class="quality-bars">${rows
+    .map(
+      (r) => `
+    <div class="quality-row">
+      <span class="quality-name">${escapeHtml(r.column)}</span>
+      <span class="fi-track"><span class="fi-fill quality-fill" style="width:${(r.null_rate * 100).toFixed(1)}%;background:var(--accent-warning)"></span></span>
+      <span class="quality-value mono">${(r.null_rate * 100).toFixed(1)}%</span>
+    </div>`
+    )
+    .join("")}</div>`;
+  if (!rows.length) html = `<p class="muted small">No missing values in this dataset.</p>`;
+
+  html += `<h4 class="missing-corr-title">Which columns tend to be missing together</h4><div id="missing-corr-box"></div>`;
+  panel.innerHTML = html;
+  renderCorrelationHeatmap($("missing-corr-box"), { columns: result.missing_correlation.columns, matrix: result.missing_correlation.matrix }, {
+    emptyMessage: "Fewer than two columns have missing values, so there's nothing to correlate.",
+    ariaLabel: "Missing-value correlation heatmap",
+  });
 }
 
 /* ================= interactive preview table ================= */
