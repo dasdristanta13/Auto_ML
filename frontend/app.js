@@ -991,7 +991,8 @@ function openRun(runId) {
   chatPendingQuestion = null;
   $("chat-input").value = "";
   $("chat-error").classList.add("hidden");
-  switchTab("report");
+  switchRunTab("overview");
+  $("tab-test-panel").classList.add("hidden");
   stopPolling();
   poll();
   pollTimer = setInterval(poll, 1500);
@@ -1055,6 +1056,7 @@ function render(run) {
   renderStatCards(run);
   renderStageTracker(run);
   renderReasoningRail(run);
+  renderLogsTab(run);
   renderTrainProgress(run);
   renderConfirm(run);
   renderLeakage(run);
@@ -1351,8 +1353,11 @@ function renderReasoningRail(run) {
     ${escapeHtml(details.why || "")}
     <span class="trust-note">${ICONS.shield} Only statistical summaries and schemas reach the AI model — never your raw rows.</span>`;
 
-  const events = run.events || [];
-  $("reasoning-log").innerHTML = events.length
+  renderEventsLog($("reasoning-log"), run.events || []);
+}
+
+function renderEventsLog(container, events) {
+  container.innerHTML = events.length
     ? [...events]
         .reverse()
         .map(
@@ -1362,6 +1367,10 @@ function renderReasoningRail(run) {
         )
         .join("")
     : `<li class="muted small">No stages completed yet.</li>`;
+}
+
+function renderLogsTab(run) {
+  renderEventsLog($("logs-tab-events"), run.events || []);
 }
 
 $("share-btn").addEventListener("click", async () => {
@@ -2005,9 +2014,7 @@ function renderInsights(run) {
 /* ================= report / test tabs ================= */
 
 function renderReport(run) {
-  const card = $("report-card");
-  if (!run.report) { card.classList.add("hidden"); return; }
-  card.classList.remove("hidden");
+  if (!run.report) return;
 
   const lines = run.report.split("\n").filter((l) => l.trim());
   const lede = lines[0] || "";
@@ -2021,7 +2028,7 @@ function renderReport(run) {
   $("download-script-btn").style.display = hasModel ? "" : "none";
   $("download-script-btn").href = `/api/runs/${run.run_id}/script`;
 
-  if ($("tab-test-btn").classList.contains("active")) loadPredictTab(run);
+  if (!$("tab-test-panel").classList.contains("hidden")) loadPredictTab(run);
 }
 
 $("trace-toggle-btn").addEventListener("click", async () => {
@@ -2035,18 +2042,32 @@ $("trace-toggle-btn").addEventListener("click", async () => {
   }
 });
 
-function switchTab(name) {
-  const isReport = name === "report";
-  $("tab-report-btn").classList.toggle("active", isReport);
-  $("tab-report-btn").setAttribute("aria-selected", String(isReport));
-  $("tab-test-btn").classList.toggle("active", !isReport);
-  $("tab-test-btn").setAttribute("aria-selected", String(!isReport));
-  $("tab-report-panel").classList.toggle("hidden", !isReport);
-  $("tab-test-panel").classList.toggle("hidden", isReport);
-  if (!isReport && lastRun) loadPredictTab(lastRun);
+const RUN_TABS = ["overview", "pipeline", "models", "explainability", "artifacts", "logs"];
+
+function switchRunTab(name) {
+  for (const tab of RUN_TABS) {
+    const isActive = tab === name;
+    $(`tab-${tab}-btn`).classList.toggle("active", isActive);
+    $(`tab-${tab}-btn`).setAttribute("aria-selected", String(isActive));
+    $(`tab-${tab}-panel`).classList.toggle("hidden", !isActive);
+  }
+  $("run-rail").classList.toggle("hidden", name !== "overview");
+  $("run-layout").classList.toggle("no-rail", name !== "overview");
 }
-$("tab-report-btn").addEventListener("click", () => switchTab("report"));
-$("tab-test-btn").addEventListener("click", () => switchTab("test"));
+for (const tab of RUN_TABS) {
+  $(`tab-${tab}-btn`).addEventListener("click", () => switchRunTab(tab));
+}
+$("tab-data-btn").addEventListener("click", () => {
+  if (lastRun) openDatasetDetail(lastRun.source_run_id || lastRun.run_id);
+});
+
+function toggleTestModelPanel() {
+  const panel = $("tab-test-panel");
+  const wasHidden = panel.classList.contains("hidden");
+  panel.classList.toggle("hidden");
+  if (wasHidden && lastRun) loadPredictTab(lastRun);
+}
+$("test-model-btn").addEventListener("click", toggleTestModelPanel);
 
 async function loadPredictTab(run) {
   if (!(run.best_model || {}).model_path) {

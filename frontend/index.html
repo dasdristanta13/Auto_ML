@@ -180,8 +180,20 @@
       <!-- stat cards -->
       <section class="stat-row" id="stat-cards"></section>
 
-      <div class="run-layout">
+      <div class="tab-bar run-tab-bar" role="tablist">
+        <button class="tab-btn active" id="tab-overview-btn" type="button" role="tab" aria-selected="true">Overview</button>
+        <button class="tab-btn" id="tab-data-btn" type="button" role="tab" aria-selected="false">Data</button>
+        <button class="tab-btn" id="tab-pipeline-btn" type="button" role="tab" aria-selected="false">Pipeline</button>
+        <button class="tab-btn" id="tab-models-btn" type="button" role="tab" aria-selected="false">Models Compared</button>
+        <button class="tab-btn" id="tab-explainability-btn" type="button" role="tab" aria-selected="false">Explainability</button>
+        <button class="tab-btn" id="tab-artifacts-btn" type="button" role="tab" aria-selected="false">Artifacts</button>
+        <button class="tab-btn" id="tab-logs-btn" type="button" role="tab" aria-selected="false">Logs</button>
+      </div>
+
+      <div class="run-layout" id="run-layout">
       <div class="run-main">
+
+      <div id="tab-overview-panel">
 
       <!-- new experiment on this dataset (multi-experiment spec) -->
       <div class="card checkpoint hidden" id="rerun-card">
@@ -203,19 +215,17 @@
         </form>
       </div>
 
-      <!-- live pipeline -->
-      <section class="card">
-        <div class="card-head">
-          <h3>Live pipeline progress</h3>
-          <span class="muted small" id="pipeline-sub"></span>
+      <button type="button" class="btn ghost" id="test-model-btn">Test this model</button>
+      <div id="tab-test-panel-slot">
+        <div id="tab-test-panel" class="hidden" role="tabpanel">
+          <p class="muted small">Runs the saved model locally against values you enter here; nothing leaves this machine.</p>
+          <form id="predict-form" class="predict-grid"></form>
+          <div class="btn-row">
+            <button type="submit" form="predict-form" class="btn primary">Predict</button>
+          </div>
+          <div id="predict-result" class="predict-result hidden"></div>
         </div>
-        <ol class="stage-tracker" id="stage-tracker"></ol>
-        <div class="train-progress hidden" id="train-progress">
-          <div class="train-progress-text" id="train-progress-text"></div>
-          <div class="train-progress-track"><div class="train-progress-fill" id="train-progress-fill"></div></div>
-          <div class="tuning-progress-list" id="tuning-progress-list"></div>
-        </div>
-      </section>
+      </div>
 
       <!-- confirmation checkpoint -->
       <div class="card checkpoint hidden" id="confirm-card">
@@ -365,65 +375,11 @@
             <div class="quality-bars" id="quality-bars"></div>
           </div>
         </div>
-
-        <div class="card hidden" id="results-card">
-          <div class="card-head">
-            <h3>Model comparison</h3>
-            <span class="muted small" id="results-sub"></span>
-          </div>
-          <div class="chip-row">
-            <div class="chip cv-config-chip" id="cv-config-chip"></div>
-            <div class="chip cv-config-chip hidden" id="resampling-config-chip"></div>
-            <div class="chip cv-config-chip hidden" id="fs-config-chip"></div>
-          </div>
-          <div class="table-scroll"><table class="results-table" id="results-table"></table></div>
-        </div>
-
-        <div class="card hidden" id="tuning-card">
-          <div class="card-head">
-            <h3>Hyperparameter tuning trend</h3>
-            <span class="muted small" id="tuning-sub"></span>
-          </div>
-          <div id="tuning-chart"></div>
-          <ul class="tuning-legend" id="tuning-legend"></ul>
-        </div>
-
-        <div class="card hidden" id="fi-card">
-          <div class="card-head"><h3>What drives the predictions</h3></div>
-          <div class="fi-list" id="fi-list"></div>
-        </div>
-
       </section>
 
-      <!-- report + try-the-model, tabbed -->
-      <div class="card hidden" id="report-card">
-        <div class="tab-bar" role="tablist">
-          <button class="tab-btn active" id="tab-report-btn" type="button" role="tab" aria-selected="true">Report</button>
-          <button class="tab-btn" id="tab-test-btn" type="button" role="tab" aria-selected="false">Test the model</button>
-        </div>
-
-        <div id="tab-report-panel" role="tabpanel">
-          <div id="report-lede" class="report-lede hidden"></div>
-          <div id="report-body" class="report-body"></div>
-          <div class="result-actions">
-            <a class="btn primary" id="download-btn" href="#" download>Download best model</a>
-            <a class="btn ghost" id="download-script-btn" href="#" download>Download training script</a>
-            <button class="btn ghost" id="trace-toggle-btn" type="button">View LLM audit trace</button>
-          </div>
-          <details class="trace-details hidden" id="trace-details">
-            <summary>Raw LLM trace (technical)</summary>
-            <div class="trace-body" id="trace-body"></div>
-          </details>
-        </div>
-
-        <div id="tab-test-panel" class="hidden" role="tabpanel">
-          <p class="muted small">Runs the saved model locally against values you enter here; nothing leaves this machine.</p>
-          <form id="predict-form" class="predict-grid"></form>
-          <div class="btn-row">
-            <button type="submit" form="predict-form" class="btn primary">Predict</button>
-          </div>
-          <div id="predict-result" class="predict-result hidden"></div>
-        </div>
+      <div class="card hidden" id="fi-card">
+        <div class="card-head"><h3>What drives the predictions</h3></div>
+        <div class="fi-list" id="fi-list"></div>
       </div>
 
       <!-- caveats — unmissable, not fine print -->
@@ -441,9 +397,85 @@
         <ul class="callout-list" id="error-list"></ul>
       </div>
 
+      </div><!-- /tab-overview-panel -->
+
+      <div id="tab-pipeline-panel" class="hidden">
+        <!-- live pipeline -->
+        <section class="card">
+          <div class="card-head">
+            <h3>Pipeline stages</h3>
+            <span class="muted small" id="pipeline-sub"></span>
+          </div>
+          <ol class="stage-tracker" id="stage-tracker"></ol>
+          <div class="train-progress hidden" id="train-progress">
+            <div class="train-progress-text" id="train-progress-text"></div>
+            <div class="train-progress-track"><div class="train-progress-fill" id="train-progress-fill"></div></div>
+            <div class="tuning-progress-list" id="tuning-progress-list"></div>
+          </div>
+        </section>
+      </div><!-- /tab-pipeline-panel -->
+
+      <div id="tab-models-panel" class="hidden">
+        <section class="dash-grid">
+          <div class="card hidden" id="results-card">
+            <div class="card-head">
+              <h3>Model comparison</h3>
+              <span class="muted small" id="results-sub"></span>
+            </div>
+            <div class="chip-row">
+              <div class="chip cv-config-chip" id="cv-config-chip"></div>
+              <div class="chip cv-config-chip hidden" id="resampling-config-chip"></div>
+              <div class="chip cv-config-chip hidden" id="fs-config-chip"></div>
+            </div>
+            <div class="table-scroll"><table class="results-table" id="results-table"></table></div>
+          </div>
+
+          <div class="card hidden" id="tuning-card">
+            <div class="card-head">
+              <h3>Hyperparameter tuning trend</h3>
+              <span class="muted small" id="tuning-sub"></span>
+            </div>
+            <div id="tuning-chart"></div>
+            <ul class="tuning-legend" id="tuning-legend"></ul>
+          </div>
+        </section>
+      </div><!-- /tab-models-panel -->
+
+      <div id="tab-explainability-panel" class="hidden">
+        <p class="muted small">SHAP-based impact analysis isn't available for this run yet — see the "Top Drivers" card on the Overview tab for current feature importance. A future update will add per-prediction explanation charts here.</p>
+      </div><!-- /tab-explainability-panel -->
+
+      <div id="tab-artifacts-panel" class="hidden">
+        <section class="card">
+          <div class="card-head"><h3>Artifacts</h3></div>
+          <div class="result-actions">
+            <a class="btn primary" id="download-btn" href="#" download>Download best model</a>
+            <a class="btn ghost" id="download-script-btn" href="#" download>Download training script</a>
+          </div>
+        </section>
+      </div><!-- /tab-artifacts-panel -->
+
+      <div id="tab-logs-panel" class="hidden">
+        <section class="card">
+          <div class="card-head"><h3>Pipeline events</h3></div>
+          <ul class="reasoning-log" id="logs-tab-events"></ul>
+        </section>
+        <section class="card">
+          <div class="card-head"><h3>LLM audit trace</h3></div>
+          <button class="btn ghost" id="trace-toggle-btn" type="button">View LLM audit trace</button>
+          <details class="trace-details hidden" id="trace-details">
+            <summary>Raw LLM trace (technical)</summary>
+            <div class="trace-body" id="trace-body"></div>
+          </details>
+        </section>
+      </div><!-- /tab-logs-panel -->
+
       </div><!-- /run-main -->
 
-      <aside class="run-rail">
+      <aside class="run-rail" id="run-rail">
+        <div id="report-lede" class="report-lede hidden"></div>
+        <div id="report-body" class="report-body"></div>
+
         <div class="card reasoning-rail hidden" id="reasoning-rail">
           <div class="reasoning-head">
             <span class="live-badge"><span class="live-dot"></span>Pipeline running</span>
