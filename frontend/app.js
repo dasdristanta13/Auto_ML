@@ -368,7 +368,9 @@ async function loadCorrelationsTab() {
     const method = $("correlation-method-select").value;
     let result;
     try {
-      result = await (await authFetch(`/api/runs/${currentDatasetRunId}/correlations?method=${method}`)).json();
+      const res = await authFetch(`/api/runs/${currentDatasetRunId}/correlations?method=${method}`);
+      if (!res.ok) throw new Error("failed to load correlations");
+      result = await res.json();
     } catch {
       $("correlation-heatmap-box").innerHTML = `<p class="muted small">Could not load correlations.</p>`;
       return;
@@ -388,7 +390,9 @@ async function loadMissingValuesTab() {
 
   let result;
   try {
-    result = await (await authFetch(`/api/runs/${currentDatasetRunId}/missing-values`)).json();
+    const res = await authFetch(`/api/runs/${currentDatasetRunId}/missing-values`);
+    if (!res.ok) throw new Error("failed to load missing-value analysis");
+    result = await res.json();
   } catch {
     panel.innerHTML = `<p class="muted small">Could not load missing-value analysis.</p>`;
     return;
