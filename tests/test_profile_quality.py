@@ -31,3 +31,10 @@ def test_quality_block_perfect_dataset():
     assert quality["uniqueness"] == 1.0
     assert quality["completeness"] == 1.0
     assert quality["overall"] == 1.0
+
+
+def test_profile_reports_memory_bytes():
+    df = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    profile = profile_dataset(df)
+    assert profile["memory_bytes"] > 0
+    assert profile["memory_bytes"] == int(df.memory_usage(deep=True).sum())

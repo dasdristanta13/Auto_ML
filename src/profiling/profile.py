@@ -114,6 +114,7 @@ def profile_dataset(df: pd.DataFrame) -> dict[str, Any]:
         "column_count": int(len(df.columns)),
         "is_wide_dataset": is_wide,
         "pii_report": pii_report,
+        "memory_bytes": int(df.memory_usage(deep=True).sum()),
     }
 
     if is_wide:
