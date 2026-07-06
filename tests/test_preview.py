@@ -134,14 +134,12 @@ def test_correlation_matrix_handles_fewer_than_two_numeric_columns():
 
 
 def test_correlation_matrix_mutual_info_degrades_gracefully_on_tiny_subset():
-    # After dropna(), only 2 rows remain in common between x and y — too few
-    # for mutual_info_regression's default n_neighbors=3, which would raise.
-    df = pd.DataFrame(
-        {
-            "x": [1.0, 2.0, None, None, None],
-            "y": [None, 3.0, 4.0, None, None],
-        }
-    )
+    # After dropna(), exactly 3 rows remain in common between x and y. That's
+    # the actual crash window: the OLD guard (`len(subset) >= 2`) would have
+    # let this through to mutual_info_regression, whose default n_neighbors=3
+    # requires strictly more than 3 samples and raises. The NEW guard
+    # (`len(subset) > 3`) correctly skips the computation instead.
+    df = pd.DataFrame({"x": [1.0, 2.0, 3.0, None], "y": [10.0, 20.0, 30.0, None]})
     result = correlation_matrix(df, method="mutual_info")
     assert result["matrix"][0][0] == 1.0
     assert result["matrix"][1][1] == 1.0
