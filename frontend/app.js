@@ -43,6 +43,65 @@ const STAGES = [
   { node: "report", label: "Report", icon: "file" },
 ];
 
+/* Plain-language copy for the reasoning rail — describes what each
+   deterministic/LLM pipeline stage actually does and why, independent of
+   any single run's data (DESIGN.md §4.1: distinguish "detected" facts from
+   product-authored explanation, never fabricate per-run specifics here). */
+const STAGE_DETAILS = {
+  profile: {
+    what: "Scanning your file to build a statistical profile — types, null rates, cardinality, and PII flags.",
+    why: "This profile is the only thing later steps see about your data; raw rows are never sent to the AI model.",
+  },
+  understand_usecase: {
+    what: "Interpreting your goal into a structured task: target column, task type, and success metric.",
+    why: "Getting this right up front means the rest of the pipeline optimizes for what you actually asked for.",
+  },
+  confirm: {
+    what: "Waiting for you to confirm or correct the inferred task before any heavy compute runs.",
+    why: "Nothing trains until you've reviewed the target column, task type, and metric.",
+  },
+  leakage_check: {
+    what: "Checking whether any column could be leaking information from the target or the future.",
+    why: "A leaking column can make a model look great in testing and fail in production.",
+  },
+  eda: {
+    what: "Running exploratory analysis — correlations, distributions, class balance — to ground the feature plan in your data.",
+    why: "Feature suggestions are based on statistics computed here, not on the AI's guess.",
+  },
+  feature_engineering: {
+    what: "Drafting a feature plan: imputation, encoding, and scaling steps tailored to what the analysis found.",
+    why: "Every step is a structured, reviewable plan — never free-form code run unsupervised.",
+  },
+  feature_approval: {
+    what: "Waiting for your review of the suggested feature steps.",
+    why: "You can uncheck anything before it's applied to your data.",
+  },
+  apply_feature_plan: {
+    what: "Applying the approved feature steps to build the training-ready dataset.",
+    why: "Only the steps you approved are applied — no silent extras.",
+  },
+  model_selection: {
+    what: "Comparing candidate model families suited to your task type and data size.",
+    why: "A broad search means the final pick isn't just the first thing that was tried.",
+  },
+  dispatch_training: {
+    what: "Queuing training jobs for each candidate model, dispatched asynchronously.",
+    why: "Training never blocks the agent; it runs in the background and is polled for progress.",
+  },
+  poll_training: {
+    what: "Training and cross-validating each candidate, including hyperparameter search where enabled.",
+    why: "Every candidate is evaluated the same way so the comparison is fair.",
+  },
+  evaluate: {
+    what: "Scoring every trained candidate on held-out data and selecting the best by your chosen metric.",
+    why: "The winner is picked by the metric you confirmed, not by which model happened to finish first.",
+  },
+  report: {
+    what: "Writing the plain-language report: what the model does well, feature importance, and caveats.",
+    why: "Caveats and limitations are always included — never softened into pure marketing language.",
+  },
+};
+
 const METRICS = {
   classification: ["f1", "accuracy", "roc_auc"],
   regression: ["rmse", "mae", "r2"],
@@ -140,10 +199,15 @@ function showIntakeView() {
   $("header-eyebrow").textContent = "Agentic AutoML";
   $("run-title").textContent = "Start an experiment";
   $("run-desc").textContent = "Upload data, describe your goal, get a model — explained.";
+  $("header-tags").classList.add("hidden");
+  $("header-tags").innerHTML = "";
   $("status-badge").classList.add("hidden");
+  $("share-btn").classList.add("hidden");
+  $("export-report-btn").classList.add("hidden");
   $("cancel-btn").classList.add("hidden");
   $("rerun-btn").classList.add("hidden");
   $("rerun-card").classList.add("hidden");
+  $("reasoning-rail").classList.add("hidden");
   selectedFile = null;
   dropzone.classList.remove("has-file");
   $("dropzone-label").innerHTML = "<strong>Drop a CSV here</strong> or click to browse";
@@ -151,6 +215,7 @@ function showIntakeView() {
   $("description").value = "";
   updateSubmit();
   loadRecentRuns();
+  history.replaceState(null, "", window.location.pathname);
 }
 
 function showRunView() {
@@ -169,7 +234,11 @@ function showDatasetsView() {
   $("dataset-detail-view")?.classList.add("hidden");
   $("datasets-view").classList.remove("hidden");
   setActiveNav("nav-datasets");
+  $("share-btn").classList.add("hidden");
+  $("export-report-btn").classList.add("hidden");
+  $("header-tags").classList.add("hidden");
   loadDatasetsList();
+  history.replaceState(null, "", window.location.pathname);
 }
 
 async function loadDatasetsList() {
@@ -213,6 +282,9 @@ function showDatasetDetailView() {
   $("datasets-view").classList.add("hidden");
   $("dataset-detail-view").classList.remove("hidden");
   setActiveNav("nav-datasets");
+  $("share-btn").classList.add("hidden");
+  $("export-report-btn").classList.add("hidden");
+  $("header-tags").classList.add("hidden");
 }
 
 async function openDatasetDetail(runId) {
@@ -910,6 +982,7 @@ function openRun(runId) {
   currentRunStatus = null;
   lastRun = null;
   showRunView();
+  history.replaceState(null, "", `?run=${encodeURIComponent(runId)}`);
   $("rerun-card").classList.add("hidden");
   $("trace-details").classList.add("hidden");
   $("trace-body").textContent = "";
@@ -935,7 +1008,16 @@ async function poll() {
   let run;
   try {
     const res = await authFetch(`/api/runs/${currentRunId}`);
-    if (!res.ok) return;
+    if (!res.ok) {
+      // A shared/bookmarked ?run= link can point at a run that no longer
+      // exists; without lastRun there's nothing to keep showing, so fall
+      // back to the intake view instead of a permanently blank dashboard.
+      if (!lastRun) {
+        stopPolling();
+        showIntakeView();
+      }
+      return;
+    }
     run = await res.json();
   } catch { return; }
 
@@ -956,6 +1038,9 @@ function render(run) {
   $("run-title").textContent = run.filename;
   $("run-desc").textContent = run.description || "";
   $("rerun-btn").classList.remove("hidden");
+  $("share-btn").classList.remove("hidden");
+  $("export-report-btn").classList.toggle("hidden", !run.report);
+  renderHeaderTags(run);
 
   const badge = $("status-badge");
   badge.classList.remove("hidden");
@@ -969,6 +1054,7 @@ function render(run) {
 
   renderStatCards(run);
   renderStageTracker(run);
+  renderReasoningRail(run);
   renderTrainProgress(run);
   renderConfirm(run);
   renderLeakage(run);
@@ -1175,6 +1261,132 @@ function renderTuningProgress(results) {
     })
     .join("");
 }
+
+/* ================= header tags ================= */
+
+function renderHeaderTags(run) {
+  const box = $("header-tags");
+  const spec = run.task_spec || {};
+  if (!spec.task_type) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    return;
+  }
+  const tags = [spec.task_type.charAt(0).toUpperCase() + spec.task_type.slice(1)];
+  if (spec.task_type === "classification") {
+    const target = (run.profile_columns || []).find((c) => c.name === spec.target_column);
+    if (target && target.n_unique != null) tags.push(target.n_unique === 2 ? "Binary" : "Multiclass");
+  }
+  if (spec.metric) tags.push(spec.metric.toUpperCase());
+  box.innerHTML = tags.map((t) => `<span class="header-tag">${escapeHtml(t)}</span>`).join("");
+  box.classList.remove("hidden");
+}
+
+/* ================= reasoning rail ================= */
+
+const LIVE_RUN_STATUSES = ["profiling", "running", "awaiting_confirmation", "awaiting_feature_approval"];
+
+/* Mirrors renderStageTracker's precedence (first not-yet-done stage is the
+   current one) to find which stage the reasoning rail should describe,
+   without duplicating that function's DOM rendering. */
+function reasoningStageIndex(run) {
+  const done = new Set(run.stages_done || []);
+  const terminal = !LIVE_RUN_STATUSES.includes(run.status);
+  const CHECKPOINT_STAGES = { confirm: "awaiting_confirmation", feature_approval: "awaiting_feature_approval" };
+  for (let i = 0; i < STAGES.length; i++) {
+    const stage = STAGES[i];
+    const isCheckpoint = CHECKPOINT_STAGES[stage.node] === run.status;
+    const stageDone = stage.node === "poll_training" ? done.has("evaluate") : done.has(stage.node);
+    if (stageDone) continue;
+    if (isCheckpoint || !terminal) return i;
+  }
+  return STAGES.length - 1;
+}
+
+function renderReasoningRail(run) {
+  const rail = $("reasoning-rail");
+  if (!LIVE_RUN_STATUSES.includes(run.status)) {
+    rail.classList.add("hidden");
+    return;
+  }
+  rail.classList.remove("hidden");
+
+  const idx = reasoningStageIndex(run);
+  const stage = STAGES[idx];
+  const details = STAGE_DETAILS[stage.node] || {};
+  const stepNum = idx + 1;
+  $("reasoning-step-count").textContent = `Step ${stepNum} of ${STAGES.length}`;
+  $("reasoning-progress-fill").style.width = `${Math.round((stepNum / STAGES.length) * 100)}%`;
+  $("reasoning-stage-label").textContent = stage.label;
+  $("reasoning-what").textContent = details.what || "";
+
+  const results = run.training_results || [];
+  const inTraining = ["dispatch_training", "poll_training"].includes(stage.node) && results.length;
+  const retry = (run.retry_count || {})[stage.node];
+  const section = $("reasoning-underhood-section");
+  const checklist = $("reasoning-checklist");
+  if (inTraining) {
+    section.classList.remove("hidden");
+    checklist.innerHTML = results
+      .map((r) => {
+        const cls = r.status === "succeeded" ? "done" : r.status === "failed" ? "failed" : r.status === "running" ? "active" : "";
+        const icon =
+          r.status === "succeeded" ? ICONS.check
+          : r.status === "failed" ? ICONS.error
+          : r.status === "running" ? '<span class="stage-spinner"></span>'
+          : ICONS.clock;
+        return `<li class="${cls}">${icon}<span>${escapeHtml(r.candidate_name)}</span></li>`;
+      })
+      .join("");
+  } else if (retry) {
+    section.classList.remove("hidden");
+    checklist.innerHTML = `<li class="active"><span class="stage-spinner"></span><span>Retrying — attempt ${retry + 1} of 4</span></li>`;
+  } else {
+    section.classList.add("hidden");
+    checklist.innerHTML = "";
+  }
+
+  $("reasoning-why").innerHTML = `
+    <strong>Why this step matters</strong>
+    ${escapeHtml(details.why || "")}
+    <span class="trust-note">${ICONS.shield} Only statistical summaries and schemas reach the AI model — never your raw rows.</span>`;
+
+  const events = run.events || [];
+  $("reasoning-log").innerHTML = events.length
+    ? [...events]
+        .reverse()
+        .map(
+          (e) => `<li>${ICONS.check}<span>${escapeHtml(e.message)}</span>${
+            e.timestamp ? `<span class="reasoning-log-time">${new Date(e.timestamp * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>` : ""
+          }</li>`
+        )
+        .join("")
+    : `<li class="muted small">No stages completed yet.</li>`;
+}
+
+$("share-btn").addEventListener("click", async () => {
+  const btn = $("share-btn");
+  const original = btn.innerHTML;
+  const url = `${window.location.origin}${window.location.pathname}?run=${encodeURIComponent(currentRunId)}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    btn.textContent = "Link copied";
+  } catch {
+    btn.textContent = "Copy failed";
+  }
+  setTimeout(() => { btn.innerHTML = original; }, 1600);
+});
+
+$("export-report-btn").addEventListener("click", () => {
+  if (!lastRun || !lastRun.report) return;
+  const blob = new Blob([lastRun.report], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${lastRun.filename.replace(/\.[^.]+$/, "")}-report.md`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
 
 /* ================= confirm checkpoint ================= */
 
@@ -1998,7 +2210,15 @@ $("logout-btn").addEventListener("click", async () => {
   }
 });
 
-loadRecentRuns();
+// A shared/bookmarked "Share" link carries ?run=<id>; open straight into
+// that run instead of the intake screen. openRun() calls loadRecentRuns()
+// itself, so only the no-deep-link path needs the initial call here.
+const deepLinkRunId = new URLSearchParams(window.location.search).get("run");
+if (deepLinkRunId) {
+  openRun(deepLinkRunId);
+} else {
+  loadRecentRuns();
+}
 // independent of the per-run poll loop, so the sidebar stays eventually
 // consistent regardless of which trigger points did or didn't fire
 setInterval(loadRecentRuns, 4000);
