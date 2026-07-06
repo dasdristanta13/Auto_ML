@@ -239,6 +239,10 @@ async function openDatasetDetail(runId) {
   previewState = { page: 1, pageSize: 50, sortBy: null, sortDir: "asc", search: "" };
   $("preview-search").value = "";
   await loadPreviewTable(run);
+
+  for (const tab of PROFILING_SUBTABS) $(`ptab-${tab}-panel`).dataset.loaded = "";
+  renderColumnSummaryTab(run);
+  switchProfilingSubtab("summary");
 }
 
 function renderDatasetKpis(run, summary) {
@@ -273,6 +277,43 @@ function renderDatasetKpis(run, summary) {
       </div>`
     )
     .join("");
+}
+
+/* ================= profiling sub-tabs ================= */
+
+const PROFILING_SUBTABS = ["summary", "correlations", "missing", "outliers"];
+
+function switchProfilingSubtab(name) {
+  for (const tab of PROFILING_SUBTABS) {
+    const isActive = tab === name;
+    $(`ptab-${tab}-btn`).classList.toggle("active", isActive);
+    $(`ptab-${tab}-btn`).setAttribute("aria-selected", String(isActive));
+    $(`ptab-${tab}-panel`).classList.toggle("hidden", !isActive);
+  }
+  if (name === "correlations" && !$("ptab-correlations-panel").dataset.loaded) loadCorrelationsTab();
+  if (name === "missing" && !$("ptab-missing-panel").dataset.loaded) loadMissingValuesTab();
+  if (name === "outliers" && !$("ptab-outliers-panel").dataset.loaded) loadOutliersTab();
+}
+for (const tab of PROFILING_SUBTABS) {
+  $(`ptab-${tab}-btn`).addEventListener("click", () => switchProfilingSubtab(tab));
+}
+
+function renderColumnSummaryTab(run) {
+  const columns = run.profile_columns || [];
+  let html = "<table class=\"results-table\"><tr><th>Column</th><th>Type</th><th>Missing %</th><th>Unique %</th><th>Cardinality</th></tr>";
+  const rowCount = (run.profile_summary || {}).row_count || 1;
+  for (const c of columns) {
+    html += `<tr>
+      <td>${escapeHtml(c.name)}</td>
+      <td>${escapeHtml(c.dtype)}</td>
+      <td class="num">${((c.null_rate || 0) * 100).toFixed(1)}%</td>
+      <td class="num">${(((c.n_unique || 0) / rowCount) * 100).toFixed(1)}%</td>
+      <td class="num">${c.n_unique ?? "—"}</td>
+    </tr>`;
+  }
+  html += "</table>";
+  $("ptab-summary-panel").innerHTML = html;
+  $("ptab-summary-panel").dataset.loaded = "1";
 }
 
 /* ================= interactive preview table ================= */
