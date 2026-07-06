@@ -22,6 +22,7 @@ MAX_PAGE_SIZE = 200
 MAX_OUTLIER_EXAMPLES = 20
 CORRELATION_MAX_COLUMNS = 50
 HISTOGRAM_BINS = 20
+TEXT_MEAN_LENGTH_THRESHOLD = 10
 
 VALID_CORRELATION_METHODS = ("pearson", "spearman", "kendall", "mutual_info")
 VALID_OUTLIER_METHODS = ("iqr", "zscore", "isolation_forest", "lof")
@@ -234,3 +235,41 @@ def detect_outliers(df: pd.DataFrame, method: str = "iqr") -> dict[str, Any]:
         "affected_columns": affected_columns,
         "example_row_indices": [int(i) for i in outlier_indices[:MAX_OUTLIER_EXAMPLES]],
     }
+
+
+def feature_type_counts(df: pd.DataFrame) -> dict[str, int]:
+    counts = {"numeric": 0, "categorical": 0, "datetime": 0, "text": 0, "boolean": 0}
+    for col in df.columns:
+        series = df[col]
+        if pd.api.types.is_bool_dtype(series):
+            counts["boolean"] += 1
+        elif pd.api.types.is_datetime64_any_dtype(series):
+            counts["datetime"] += 1
+        elif pd.api.types.is_numeric_dtype(series):
+            counts["numeric"] += 1
+        else:
+            non_null = series.dropna().astype(str)
+            mean_len = non_null.str.len().mean() if len(non_null) else 0.0
+            if mean_len > TEXT_MEAN_LENGTH_THRESHOLD:
+                counts["text"] += 1
+            else:
+                counts["categorical"] += 1
+    return counts
+
+
+def ml_readiness_score(profile: dict[str, Any], leakage_flags: Optional[list[dict[str, Any]]] = None) -> float:
+    """Heuristic composite score, NOT a guarantee (same caveat convention as
+    src/profiling/leakage.py::detect_target_leakage)."""
+    quality = profile.get("quality", {}) or {}
+    completeness = float(quality.get("completeness", 1.0))
+    uniqueness = float(quality.get("uniqueness", 1.0))
+
+    flags = leakage_flags or []
+    high_severity = sum(1 for f in flags if f.get("severity") == "high")
+    total_columns = max(profile.get("column_count", 1), 1)
+    leakage_ratio = min(high_severity / total_columns, 1.0)
+
+    wide_penalty = 0.5 if profile.get("is_wide_dataset") else 0.0
+
+    score = 0.4 * completeness + 0.3 * uniqueness + 0.2 * (1 - leakage_ratio) + 0.1 * (1 - wide_penalty)
+    return round(max(0.0, min(1.0, score)), 4)

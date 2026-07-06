@@ -9,7 +9,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.profiling.preview import MAX_PAGE_SIZE, MAX_OUTLIER_EXAMPLES, column_detail, correlation_matrix, paginate_rows, missing_value_matrix, detect_outliers
+from src.profiling.preview import MAX_PAGE_SIZE, MAX_OUTLIER_EXAMPLES, column_detail, correlation_matrix, paginate_rows, missing_value_matrix, detect_outliers, feature_type_counts, ml_readiness_score
 
 
 def _df():
@@ -248,3 +248,38 @@ def test_detect_outliers_isolation_forest_handles_entirely_null_numeric_column()
     result = detect_outliers(df, method="isolation_forest")
     assert result["method"] == "isolation_forest"
     assert "outlier_count" in result
+
+
+def test_feature_type_counts_classifies_columns():
+    df = pd.DataFrame(
+        {
+            "age": [25, 30, 35],
+            "plan": ["basic", "pro", "basic"],
+            "signed_up_at": pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"]),
+            "is_active": [True, False, True],
+            "bio": ["a" * 50, "b" * 60, "c" * 45],
+        }
+    )
+    counts = feature_type_counts(df)
+    assert counts["numeric"] == 1
+    assert counts["categorical"] == 1
+    assert counts["datetime"] == 1
+    assert counts["boolean"] == 1
+    assert counts["text"] == 1
+
+
+def test_ml_readiness_score_is_bounded():
+    profile = {
+        "quality": {"completeness": 0.9, "uniqueness": 0.95},
+        "column_count": 10,
+        "is_wide_dataset": False,
+    }
+    score = ml_readiness_score(profile, leakage_flags=[])
+    assert 0.0 <= score <= 1.0
+
+
+def test_ml_readiness_score_penalizes_high_severity_leakage():
+    profile = {"quality": {"completeness": 1.0, "uniqueness": 1.0}, "column_count": 10, "is_wide_dataset": False}
+    clean_score = ml_readiness_score(profile, leakage_flags=[])
+    leaky_score = ml_readiness_score(profile, leakage_flags=[{"severity": "high"}] * 5)
+    assert leaky_score < clean_score
