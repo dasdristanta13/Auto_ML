@@ -9,7 +9,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.profiling.preview import MAX_PAGE_SIZE, column_detail, correlation_matrix, paginate_rows
+from src.profiling.preview import MAX_PAGE_SIZE, column_detail, correlation_matrix, paginate_rows, missing_value_matrix
 
 
 def _df():
@@ -156,3 +156,25 @@ def test_correlation_matrix_truncates_to_max_columns_by_variance():
     assert result["truncated"] is True
     assert len(result["columns"]) == 50
     assert "high_var" in result["columns"]
+
+
+def test_missing_value_matrix_reports_per_column_rates():
+    df = pd.DataFrame({"a": [1, None, 3, None], "b": [1, 2, 3, 4]})
+    result = missing_value_matrix(df)
+    per_col = {row["column"]: row for row in result["per_column"]}
+    assert per_col["a"]["null_count"] == 2
+    assert per_col["a"]["null_rate"] == 0.5
+    assert per_col["b"]["null_count"] == 0
+
+
+def test_missing_value_matrix_correlation_only_over_columns_with_nulls():
+    df = pd.DataFrame({"a": [1, None, 3, None], "b": [1, None, 3, None], "c": [1, 2, 3, 4]})
+    result = missing_value_matrix(df)
+    assert set(result["missing_correlation"]["columns"]) == {"a", "b"}
+    assert len(result["missing_correlation"]["matrix"]) == 2
+
+
+def test_missing_value_matrix_empty_correlation_when_fewer_than_two_null_columns():
+    df = pd.DataFrame({"a": [1, None, 3], "b": [1, 2, 3]})
+    result = missing_value_matrix(df)
+    assert result["missing_correlation"]["matrix"] == []

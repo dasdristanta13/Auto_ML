@@ -155,3 +155,28 @@ def correlation_matrix(df: pd.DataFrame, method: str = "pearson") -> dict[str, A
         matrix = [[float(corr.loc[a, b]) for b in numeric_cols] for a in numeric_cols]
 
     return {"method": method, "columns": numeric_cols, "matrix": matrix, "truncated": truncated}
+
+
+def missing_value_matrix(df: pd.DataFrame) -> dict[str, Any]:
+    null_counts = df.isna().sum()
+    columns_with_nulls = [c for c in df.columns if null_counts[c] > 0]
+
+    per_column = [
+        {
+            "column": c,
+            "null_count": int(null_counts[c]),
+            "null_rate": float(null_counts[c] / len(df)) if len(df) else 0.0,
+        }
+        for c in df.columns
+    ]
+
+    if len(columns_with_nulls) >= 2:
+        nullness_corr = df[columns_with_nulls].isna().corr().fillna(0.0)
+        correlation = {
+            "columns": columns_with_nulls,
+            "matrix": [[float(nullness_corr.loc[a, b]) for b in columns_with_nulls] for a in columns_with_nulls],
+        }
+    else:
+        correlation = {"columns": columns_with_nulls, "matrix": []}
+
+    return {"per_column": per_column, "missing_correlation": correlation}
