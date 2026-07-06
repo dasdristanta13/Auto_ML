@@ -13,14 +13,12 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-import numpy as np
 import pandas as pd
 
 MAX_PAGE_SIZE = 200
 MAX_OUTLIER_EXAMPLES = 20
 CORRELATION_MAX_COLUMNS = 50
 HISTOGRAM_BINS = 20
-TEXT_MEAN_LENGTH_THRESHOLD = 30
 
 VALID_CORRELATION_METHODS = ("pearson", "spearman", "kendall", "mutual_info")
 VALID_OUTLIER_METHODS = ("iqr", "zscore", "isolation_forest", "lof")
@@ -37,8 +35,8 @@ def paginate_rows(
     """Server-side page of raw rows. duplicate_row_indices are indices
     within the returned page only (cheap to compute, no full-dataset scan
     needed for a UI highlight)."""
-    if page_size > MAX_PAGE_SIZE:
-        raise ValueError(f"page_size must be <= {MAX_PAGE_SIZE}")
+    if page_size < 1 or page_size > MAX_PAGE_SIZE:
+        raise ValueError(f"page_size must be between 1 and {MAX_PAGE_SIZE}")
     if page < 1:
         raise ValueError("page must be >= 1")
 

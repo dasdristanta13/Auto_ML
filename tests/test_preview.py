@@ -45,6 +45,11 @@ def test_paginate_rejects_oversized_page():
         paginate_rows(_df(), page=1, page_size=MAX_PAGE_SIZE + 1)
 
 
+def test_paginate_rejects_non_positive_page_size():
+    with pytest.raises(ValueError):
+        paginate_rows(_df(), page=1, page_size=0)
+
+
 def test_paginate_search_filters_rows():
     result = paginate_rows(_df(), page=1, page_size=10, search="x")
     assert result["total_count"] == 1
