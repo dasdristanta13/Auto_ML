@@ -44,6 +44,7 @@ from src.export.script_export import generate_training_script
 from src.graph.build_graph import build_intake_graph, build_prep_graph, build_train_graph
 from src.agents.chat_node import answer_chat_question
 from src.insights.auto_insights import generate_insights, suggested_questions
+from src.profiling import preview
 from src.profiling.heuristics import target_too_high_cardinality_for_classification
 from src.llm.tracing import read_trace
 from src.state import PipelineState, new_state
@@ -739,6 +740,29 @@ def predict(
 def get_trace(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> list[dict[str, Any]]:
     _get_entry(run_id)
     return _json_safe(read_trace(run_id))
+
+
+@app.get("/api/runs/{run_id}/preview")
+def get_dataset_preview(
+    run_id: str,
+    page: int = 1,
+    page_size: int = 50,
+    sort_by: Optional[str] = None,
+    sort_dir: str = "asc",
+    search: Optional[str] = None,
+    _session: dict[str, Any] = Depends(require_session),
+) -> dict[str, Any]:
+    entry = _get_entry(run_id)
+    df = _dataset_df_for_run(run_id, entry)
+    try:
+        result = preview.paginate_rows(
+            df, page=page, page_size=page_size, sort_by=sort_by, sort_dir=sort_dir, search=search
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    pii_columns = (entry["state"].get("profile", {}).get("pii_report", {}) or {}).get("columns", {}) or {}
+    result["pii_columns"] = sorted(pii_columns)
+    return _json_safe(result)
 
 
 class ChatRequest(BaseModel):
