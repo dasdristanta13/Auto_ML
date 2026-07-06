@@ -2014,6 +2014,7 @@ function renderInsights(run) {
 /* ================= report / test tabs ================= */
 
 function renderReport(run) {
+  $("test-model-btn").classList.toggle("hidden", !run.report);
   if (!run.report) return;
 
   const lines = run.report.split("\n").filter((l) => l.trim());
