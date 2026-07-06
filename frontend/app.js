@@ -206,6 +206,8 @@ async function loadDatasetsList() {
 }
 
 function showDatasetDetailView() {
+  $("intake-view").classList.add("hidden");
+  $("run-view").classList.add("hidden");
   $("datasets-view").classList.add("hidden");
   $("dataset-detail-view").classList.remove("hidden");
   setActiveNav("nav-datasets");
@@ -217,7 +219,9 @@ async function openDatasetDetail(runId) {
   $("column-explorer").classList.add("hidden");
   let run;
   try {
-    run = await (await authFetch(`/api/runs/${runId}`)).json();
+    const res = await authFetch(`/api/runs/${runId}`);
+    if (!res.ok) throw new Error("failed to load dataset");
+    run = await res.json();
   } catch {
     $("dataset-breadcrumb-name").textContent = "Could not load dataset";
     return;
