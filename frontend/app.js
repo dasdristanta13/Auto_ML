@@ -201,6 +201,7 @@ function showIntakeView() {
   $("run-desc").textContent = "Upload data, describe your goal, get a model — explained.";
   $("header-tags").classList.add("hidden");
   $("header-tags").innerHTML = "";
+  $("run-breadcrumb").classList.add("hidden");
   $("status-badge").classList.add("hidden");
   $("share-btn").classList.add("hidden");
   $("export-report-btn").classList.add("hidden");
@@ -237,6 +238,7 @@ function showDatasetsView() {
   $("share-btn").classList.add("hidden");
   $("export-report-btn").classList.add("hidden");
   $("header-tags").classList.add("hidden");
+  $("run-breadcrumb").classList.add("hidden");
   loadDatasetsList();
   history.replaceState(null, "", window.location.pathname);
 }
@@ -285,6 +287,7 @@ function showDatasetDetailView() {
   $("share-btn").classList.add("hidden");
   $("export-report-btn").classList.add("hidden");
   $("header-tags").classList.add("hidden");
+  $("run-breadcrumb").classList.add("hidden");
 }
 
 async function openDatasetDetail(runId) {
@@ -975,6 +978,10 @@ $("cancel-btn").addEventListener("click", async () => {
   } catch { /* poll() reflects the outcome regardless */ }
 });
 
+$("run-breadcrumb-datasets").addEventListener("click", () => {
+  if (lastRun) openDatasetDetail(lastRun.source_run_id || lastRun.run_id);
+});
+
 /* ================= run view + polling ================= */
 
 function openRun(runId) {
@@ -1042,6 +1049,7 @@ function render(run) {
   $("share-btn").classList.remove("hidden");
   $("export-report-btn").classList.toggle("hidden", !run.report);
   renderHeaderTags(run);
+  renderBreadcrumb(run);
 
   const badge = $("status-badge");
   badge.classList.remove("hidden");
@@ -1282,6 +1290,11 @@ function renderHeaderTags(run) {
   if (spec.metric) tags.push(spec.metric.toUpperCase());
   box.innerHTML = tags.map((t) => `<span class="header-tag">${escapeHtml(t)}</span>`).join("");
   box.classList.remove("hidden");
+}
+
+function renderBreadcrumb(run) {
+  $("run-breadcrumb").classList.remove("hidden");
+  $("run-breadcrumb-name").textContent = run.filename;
 }
 
 /* ================= reasoning rail ================= */
