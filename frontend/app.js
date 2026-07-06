@@ -119,6 +119,7 @@ $("nav-dashboard").addEventListener("click", () => {
 });
 $("nav-new").addEventListener("click", showIntakeView);
 $("new-run-btn").addEventListener("click", showIntakeView);
+$("nav-datasets").addEventListener("click", showDatasetsView);
 
 function setActiveNav(id) {
   document.querySelectorAll(".nav-item.active").forEach((el) => el.classList.remove("active"));
@@ -151,6 +152,52 @@ function showRunView() {
   $("intake-view").classList.add("hidden");
   $("run-view").classList.remove("hidden");
   setActiveNav("nav-dashboard");
+}
+
+function showDatasetsView() {
+  stopPolling();
+  currentRunId = null;
+  $("intake-view").classList.add("hidden");
+  $("run-view").classList.add("hidden");
+  $("dataset-detail-view")?.classList.add("hidden");
+  $("datasets-view").classList.remove("hidden");
+  setActiveNav("nav-datasets");
+  loadDatasetsList();
+}
+
+async function loadDatasetsList() {
+  const box = $("datasets-list");
+  let datasets = [];
+  try {
+    datasets = await (await authFetch("/api/datasets")).json();
+  } catch {
+    box.innerHTML = `<p class="muted small">Could not load datasets.</p>`;
+    return;
+  }
+  $("datasets-sub").textContent = `${datasets.length} dataset${datasets.length === 1 ? "" : "s"}`;
+  if (!datasets.length) {
+    box.innerHTML = `<p class="muted small">No datasets yet — start an experiment to upload one.</p>`;
+    return;
+  }
+  box.innerHTML = datasets
+    .map(
+      (d) => `
+    <button type="button" class="dataset-row" data-run-id="${d.run_id}">
+      <span class="dataset-row-main">
+        <span class="dataset-row-name">${escapeHtml(d.filename)}</span>
+        <span class="muted small">${d.row_count != null ? Number(d.row_count).toLocaleString() + " rows" : "…"} · ${d.column_count ?? "?"} columns</span>
+      </span>
+      <span class="dataset-row-meta">
+        ${d.quality_score != null ? `<span class="chip detected">${Math.round(d.quality_score * 100)}% quality</span>` : ""}
+        <span class="status-badge ${d.status}">${d.status.replaceAll("_", " ")}</span>
+        <span class="muted small">${relativeTime(d.created_at)}</span>
+      </span>
+    </button>`
+    )
+    .join("");
+  box.querySelectorAll(".dataset-row").forEach((el) => {
+    el.addEventListener("click", () => openDatasetDetail(el.dataset.runId));
+  });
 }
 
 /* ================= recent runs (sidebar) ================= */
