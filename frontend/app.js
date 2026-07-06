@@ -415,6 +415,49 @@ async function loadMissingValuesTab() {
   });
 }
 
+/* ================= outliers sub-tab ================= */
+
+async function loadOutliersTab() {
+  const panel = $("ptab-outliers-panel");
+  panel.innerHTML = `
+    <div class="chip-row">
+      <label class="field" style="max-width:200px">
+        <span class="visually-hidden">Outlier detection method</span>
+        <select id="outlier-method-select">
+          <option value="iqr">IQR</option>
+          <option value="zscore">Z-score</option>
+          <option value="isolation_forest">Isolation Forest</option>
+          <option value="lof">Local Outlier Factor</option>
+        </select>
+      </label>
+    </div>
+    <div id="outlier-result-box"><p class="muted small">Loading…</p></div>`;
+  panel.dataset.loaded = "1";
+
+  const fetchAndRender = async () => {
+    const method = $("outlier-method-select").value;
+    const box = $("outlier-result-box");
+    box.innerHTML = `<p class="muted small">Detecting…</p>`;
+    let result;
+    try {
+      const res = await authFetch(`/api/runs/${currentDatasetRunId}/outliers?method=${method}`);
+      if (!res.ok) throw new Error("failed to run outlier detection");
+      result = await res.json();
+    } catch {
+      box.innerHTML = `<p class="muted small">Could not run outlier detection.</p>`;
+      return;
+    }
+    box.innerHTML = `
+      <div class="chips">
+        <span class="chip flagged">${result.outlier_count} outlier row(s) detected</span>
+        ${(result.affected_columns || []).map((c) => `<span class="chip detected">${escapeHtml(c)}</span>`).join("")}
+      </div>
+      ${result.example_row_indices && result.example_row_indices.length ? `<p class="muted small">Example row indices: ${result.example_row_indices.join(", ")}</p>` : ""}`;
+  };
+  $("outlier-method-select").addEventListener("change", fetchAndRender);
+  await fetchAndRender();
+}
+
 /* ================= interactive preview table ================= */
 
 function classifyPreviewType(dtype) {
