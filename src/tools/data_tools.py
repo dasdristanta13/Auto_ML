@@ -14,6 +14,7 @@ import pandas as pd
 import yaml
 from langchain_core.tools import tool
 
+from src.data_io import load_dataset
 from src.pii.redact import redact_dataframe
 from src.profiling.leakage import detect_target_leakage
 from src.profiling.profile import profile_dataset
@@ -27,11 +28,7 @@ def _max_sample_rows() -> int:
 
 
 def _load(dataset_path: str) -> pd.DataFrame:
-    if dataset_path.endswith(".parquet"):
-        return pd.read_parquet(dataset_path)
-    if dataset_path.endswith(".json"):
-        return pd.read_json(dataset_path)
-    return pd.read_csv(dataset_path)
+    return load_dataset(dataset_path)
 
 
 @tool

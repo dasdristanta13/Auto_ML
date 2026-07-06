@@ -12,6 +12,7 @@ Redis-backed result store in production without touching agents/graph code.
 
 from __future__ import annotations
 
+import inspect
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -45,6 +46,8 @@ from sklearn.model_selection import (
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler, RobustScaler, StandardScaler, TargetEncoder
 
+from src.data_io import load_dataset
+
 _RUNTIME_CONFIG_PATH = "config/runtime.yaml"
 ARTIFACT_DIR = Path("artifacts/models")
 
@@ -65,34 +68,16 @@ def _get_executor() -> ThreadPoolExecutor:
     return _executor
 
 
-_TREE_ENSEMBLE_ESTIMATORS = {
-    "RandomForestClassifier",
-    "RandomForestRegressor",
-    "GradientBoostingClassifier",
-    "GradientBoostingRegressor",
-}
-
-
-def _sanitize_hyperparams(estimator: str, hyperparams: dict[str, Any]) -> dict[str, Any]:
-    """LLM-proposed hyperparams are structured JSON (CLAUDE.md rule #2) but
-    aren't validated against the installed sklearn version's accepted values.
-    `max_features="auto"` was the sklearn default for tree ensembles prior to
-    1.1 and was removed outright in 1.3+, so it's a common, plausible LLM
-    suggestion that would otherwise fail every candidate using it. Map it to
-    its historical equivalent: sqrt(n_features) for classifiers, "no
-    restriction" (None) for regressors — not just a guess of "sqrt" for both."""
-    if estimator in _TREE_ENSEMBLE_ESTIMATORS and hyperparams.get("max_features") == "auto":
-        hyperparams = dict(hyperparams)
-        hyperparams["max_features"] = "sqrt" if estimator.endswith("Classifier") else None
-    return hyperparams
-
-
-def _build_estimator(library: str, estimator: str, hyperparams: dict[str, Any]):
+def _estimator_registry(library: str) -> dict[str, type]:
+    """Single source of truth for valid estimator names per library — used
+    by both training dispatch and model_selection_node's pre-dispatch
+    validation. Lazily imports each library so an uninstalled optional
+    dependency (xgboost/lightgbm) only fails when actually requested."""
     if library == "sklearn":
         import sklearn.ensemble as ens
         import sklearn.linear_model as lm
 
-        registry = {
+        return {
             "LogisticRegression": lm.LogisticRegression,
             "LinearRegression": lm.LinearRegression,
             "Ridge": lm.Ridge,
@@ -101,21 +86,70 @@ def _build_estimator(library: str, estimator: str, hyperparams: dict[str, Any]):
             "GradientBoostingClassifier": ens.GradientBoostingClassifier,
             "GradientBoostingRegressor": ens.GradientBoostingRegressor,
         }
-    elif library == "xgboost":
+    if library == "xgboost":
         import xgboost as xgb
 
-        registry = {"XGBClassifier": xgb.XGBClassifier, "XGBRegressor": xgb.XGBRegressor}
-    elif library == "lightgbm":
+        return {"XGBClassifier": xgb.XGBClassifier, "XGBRegressor": xgb.XGBRegressor}
+    if library == "lightgbm":
         import lightgbm as lgb
 
-        registry = {"LGBMClassifier": lgb.LGBMClassifier, "LGBMRegressor": lgb.LGBMRegressor}
-    else:
-        raise ValueError(f"unknown library '{library}'")
+        return {"LGBMClassifier": lgb.LGBMClassifier, "LGBMRegressor": lgb.LGBMRegressor}
+    raise ValueError(f"unknown library '{library}'")
 
+
+def known_estimators(library: str) -> set[str]:
+    """Best-effort: returns an empty set if the library isn't installed in
+    this environment, rather than raising. model_selection_node uses this to
+    validate LLM-proposed estimator names before a candidate ever reaches
+    dispatch — only called for libraries _library_available() already
+    confirmed importable, so ImportError here is a defensive fallback, not
+    the expected path."""
+    try:
+        return set(_estimator_registry(library))
+    except (ImportError, ValueError):
+        return set()
+
+
+_DEPRECATED_HYPERPARAM_VALUES: dict[str, dict[Any, dict[str, Any]]] = {
+    # param_name -> {llm_supplied_value: {"classifier": replacement, "regressor": replacement}}
+    "max_features": {"auto": {"classifier": "sqrt", "regressor": None}},
+}
+
+
+def _sanitize_hyperparams(estimator_cls: type, hyperparams: dict[str, Any]) -> dict[str, Any]:
+    """Defense-in-depth for CandidateModel.hyperparams (src/state.py), an
+    untyped dict[str, Any] the LLM controls with no schema/enum validating
+    individual names or values. Two independent protections:
+    1. Drop any key estimator_cls.__init__ doesn't accept, via signature
+       introspection, instead of a typo'd/hallucinated name crashing
+       construction with TypeError. Skipped when __init__ declares
+       **kwargs (some XGBoost/LightGBM versions accept arbitrary extra
+       keys), since nothing can be validated against an open signature.
+    2. Translate known deprecated/renamed values (e.g. sklearn's
+       max_features="auto", removed in 1.3) to their modern equivalent.
+    """
+    sanitized = dict(hyperparams)
+    params = inspect.signature(estimator_cls.__init__).parameters
+    accepts_arbitrary_kwargs = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+    if not accepts_arbitrary_kwargs:
+        valid_names = set(params) - {"self"}
+        sanitized = {k: v for k, v in sanitized.items() if k in valid_names}
+
+    kind = "classifier" if estimator_cls.__name__.endswith("Classifier") else "regressor"
+    for param, value_map in _DEPRECATED_HYPERPARAM_VALUES.items():
+        if param in sanitized and sanitized[param] in value_map:
+            sanitized[param] = value_map[sanitized[param]][kind]
+
+    return sanitized
+
+
+def _build_estimator(library: str, estimator: str, hyperparams: dict[str, Any]):
+    registry = _estimator_registry(library)
     if estimator not in registry:
         raise ValueError(f"unknown estimator '{estimator}' for library '{library}'")
-    hyperparams = _sanitize_hyperparams(estimator, hyperparams)
-    return registry[estimator](**hyperparams)
+    estimator_cls = registry[estimator]
+    hyperparams = _sanitize_hyperparams(estimator_cls, hyperparams)
+    return estimator_cls(**hyperparams)
 
 
 def _split(
@@ -168,6 +202,9 @@ def _build_preprocessor(steps: list[dict[str, Any]], X: pd.DataFrame) -> ColumnT
     """
     columns = list(X.columns)
     numeric_cols = [c for c in columns if pd.api.types.is_numeric_dtype(X[c])]
+    categorical_cols = [
+        c for c in columns if isinstance(X[c].dtype, pd.CategoricalDtype) or X[c].dtype in ("object", "string")
+    ]
 
     impute_strategy: dict[str, str] = {}
     scale_method: dict[str, str] = {}
@@ -211,6 +248,19 @@ def _build_preprocessor(steps: list[dict[str, Any]], X: pd.DataFrame) -> ColumnT
                 stages.append(("scale", _SCALERS[scale]()))
             stages.append(("impute", SimpleImputer(strategy="constant", fill_value=0.0)))
         transformers.append((f"num_{i}", Pipeline(stages), group_cols))
+
+    if not transformers and not target_encode_cols:
+        # a dataset with no numeric features (all-categorical, e.g. mushroom-
+        # style data) would otherwise produce a ZERO-column matrix and fail
+        # every fit of every candidate ("model is misconfigured"). Fall back
+        # to target-encoding the categorical columns instead of training on
+        # nothing; TargetEncoder cross-fits internally so this stays
+        # leakage-safe even for high-cardinality columns.
+        target_encode_cols = list(categorical_cols)
+        if not target_encode_cols:
+            raise ValueError(
+                "no usable feature columns: dataset has no numeric or categorical features to train on"
+            )
 
     if target_encode_cols:
         # default cv/shuffle settings: sklearn 1.9 deprecated random_state
@@ -300,7 +350,14 @@ def _cross_validate(
         scoring = _CV_REGRESSION_SCORERS
         sign_flip = _CV_REGRESSION_SIGN_FLIP
 
-    scores = cross_validate(clone(estimator), X, y, cv=splitter, scoring=scoring)
+    # error_score="raise" so a failing fold surfaces its REAL exception —
+    # the default (nan) buries it under sklearn's "model is misconfigured"
+    # warning and NaN metrics. The caller degrades gracefully: holdout
+    # training still proceeds, with the cause recorded in cv_note.
+    try:
+        scores = cross_validate(clone(estimator), X, y, cv=splitter, scoring=scoring, error_score="raise")
+    except Exception as exc:  # noqa: BLE001 - any fold error degrades to "CV unavailable", not a dead job
+        return {"folds": 0, "metrics": {}, "note": f"cross-validation failed: {exc}"}
 
     metrics: dict[str, Any] = {}
     for name in scoring:
@@ -559,8 +616,45 @@ def _run_job(
     start = time.monotonic()
     _registry[run_id]["status"] = "running"
     try:
-        df = pd.read_csv(dataset_path) if dataset_path.endswith(".csv") else pd.read_parquet(dataset_path)
+        df = load_dataset(dataset_path)
+        if target_column not in df.columns:
+            raise ValueError(
+                f"target column '{target_column}' not found in dataset (available: {list(df.columns)[:30]})"
+            )
         df = df.dropna(subset=[target_column])
+        if df.empty:
+            raise ValueError(f"target column '{target_column}' has no non-null values")
+
+        # bool/int feature columns count as numeric to pandas but trip modern
+        # sklearn dtype validation: SimpleImputer refuses bool input outright,
+        # and refuses a float fill_value (the pipeline's constant-0.0 stage)
+        # on int64 input. Cast both to float64 — estimators convert to float
+        # internally anyway, and float holds NaN, so nullable bool/Int64
+        # columns with missing values cast cleanly too. The target column is
+        # left alone so classification labels stay as-is.
+        cast_cols = [
+            c
+            for c in df.columns
+            if c != target_column
+            and (pd.api.types.is_bool_dtype(df[c]) or pd.api.types.is_integer_dtype(df[c]))
+        ]
+        if cast_cols:
+            df = df.copy()
+            df[cast_cols] = df[cast_cols].astype("float64")
+        if pd.api.types.is_bool_dtype(df[target_column]):
+            df = df.copy()
+            df[target_column] = df[target_column].astype("int64")
+
+        # ±inf (divide-by-zero artifacts, sentinel values) fails estimator
+        # fit with "Input contains infinity" — treat as missing so the
+        # pipeline's imputers handle it like any other NaN.
+        float_cols = [c for c in df.columns if pd.api.types.is_float_dtype(df[c])]
+        if float_cols and np.isinf(df[float_cols].to_numpy()).any():
+            df = df.copy()
+            df[float_cols] = df[float_cols].replace([np.inf, -np.inf], np.nan)
+            df = df.dropna(subset=[target_column])
+            if df.empty:
+                raise ValueError(f"target column '{target_column}' has no finite values")
 
         label_encoder = None
         y_full = df[target_column]
@@ -568,6 +662,22 @@ def _run_job(
             label_encoder = LabelEncoder()
             df = df.copy()
             df[target_column] = label_encoder.fit_transform(y_full.astype(str))
+        elif task_type == "regression" and not pd.api.types.is_numeric_dtype(y_full):
+            # numbers frequently arrive as strings ("1,234", "$50.00", " 3.5 ");
+            # strip common formatting and coerce rather than crashing the fit
+            # with an opaque sklearn dtype error. Rows that still don't parse
+            # are dropped; an entirely unparseable target is a clear error.
+            coerced = pd.to_numeric(
+                y_full.astype(str).str.strip().str.replace(r"[,$€£%]", "", regex=True), errors="coerce"
+            )
+            if coerced.notna().sum() == 0:
+                raise ValueError(
+                    f"target column '{target_column}' is non-numeric and could not be parsed as numbers; "
+                    "a regression target must be numeric — pick a different column or task type"
+                )
+            df = df.copy()
+            df[target_column] = coerced
+            df = df.dropna(subset=[target_column])
 
         X_train, X_test, y_train, y_test = _split(df, target_column, task_type, time_column)
 
@@ -596,20 +706,34 @@ def _run_job(
 
         if tuning_enabled:
             cfg = _runtime_config()
-            final_params, tuning_info = _tune_pipeline(
-                run_id,
-                _make_pipeline,
-                hyperparams,
-                library,
-                estimator_name,
-                X_train,
-                y_train,
-                task_type,
-                tuning_metric,
-                time_column,
-                tuning_trials if tuning_trials is not None else cfg["tuning_trials"],
-                cfg["hyperparam_search_budget_seconds"],
-            )
+            try:
+                final_params, tuning_info = _tune_pipeline(
+                    run_id,
+                    _make_pipeline,
+                    hyperparams,
+                    library,
+                    estimator_name,
+                    X_train,
+                    y_train,
+                    task_type,
+                    tuning_metric,
+                    time_column,
+                    tuning_trials if tuning_trials is not None else cfg["tuning_trials"],
+                    cfg["hyperparam_search_budget_seconds"],
+                )
+            except Exception as exc:  # noqa: BLE001 - tuning is an optimization, never a reason to fail the run
+                final_params = dict(hyperparams)
+                tuning_info = {
+                    "enabled": False,
+                    "trials_total": 0,
+                    "trials_done": 0,
+                    "metric": None,
+                    "lower_is_better": False,
+                    "best_params": {},
+                    "history": [],
+                    "note": f"tuning skipped after error, trained with proposed hyperparameters: {exc}",
+                }
+                _registry[run_id]["tuning"] = dict(tuning_info)
         else:
             final_params = dict(hyperparams)
             tuning_info = {
