@@ -765,6 +765,31 @@ def get_dataset_preview(
     return _json_safe(result)
 
 
+@app.get("/api/runs/{run_id}/columns/{column}")
+def get_column_detail(
+    run_id: str, column: str, _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
+    entry = _get_entry(run_id)
+    df = _dataset_df_for_run(run_id, entry)
+    if column not in df.columns:
+        raise HTTPException(status_code=404, detail=f"unknown column '{column}'")
+    task_spec = entry["state"].get("task_spec") or {}
+    result = preview.column_detail(df, column, target_column=task_spec.get("target_column"))
+
+    feature_plan = entry["state"].get("feature_plan") or {}
+    matching_steps = [s for s in feature_plan.get("steps", []) if column in (s.get("columns") or [])]
+    leakage_flags = [f for f in entry["state"].get("leakage_flags", []) if f.get("column") == column]
+    if matching_steps or leakage_flags:
+        result["ml_insights"] = {
+            "analyzed": True,
+            "recommended_steps": [{"op": s.get("op"), "rationale": s.get("rationale")} for s in matching_steps],
+            "leakage_flags": leakage_flags,
+        }
+    else:
+        result["ml_insights"] = {"analyzed": False}
+    return _json_safe(result)
+
+
 class ChatRequest(BaseModel):
     question: str
 
