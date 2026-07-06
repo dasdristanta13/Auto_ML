@@ -790,6 +790,53 @@ def get_column_detail(
     return _json_safe(result)
 
 
+@app.get("/api/runs/{run_id}/correlations")
+def get_correlations(
+    run_id: str, method: str = "pearson", _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
+    entry = _get_entry(run_id)
+    df = _dataset_df_for_run(run_id, entry)
+    try:
+        result = preview.correlation_matrix(df, method=method)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _json_safe(result)
+
+
+@app.get("/api/runs/{run_id}/missing-values")
+def get_missing_values(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> dict[str, Any]:
+    entry = _get_entry(run_id)
+    df = _dataset_df_for_run(run_id, entry)
+    return _json_safe(preview.missing_value_matrix(df))
+
+
+@app.get("/api/runs/{run_id}/outliers")
+def get_outliers(
+    run_id: str, method: str = "iqr", _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
+    entry = _get_entry(run_id)
+    df = _dataset_df_for_run(run_id, entry)
+    try:
+        result = preview.detect_outliers(df, method=method)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _json_safe(result)
+
+
+@app.get("/api/runs/{run_id}/dataset-summary")
+def get_dataset_summary(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> dict[str, Any]:
+    entry = _get_entry(run_id)
+    df = _dataset_df_for_run(run_id, entry)
+    profile = entry["state"].get("profile", {}) or {}
+    leakage_flags = entry["state"].get("leakage_flags", [])
+    return _json_safe(
+        {
+            "feature_type_counts": preview.feature_type_counts(df),
+            "ml_readiness_score": preview.ml_readiness_score(profile, leakage_flags),
+        }
+    )
+
+
 class ChatRequest(BaseModel):
     question: str
 
