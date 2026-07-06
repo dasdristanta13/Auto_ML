@@ -48,10 +48,50 @@ def _runtime_config() -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def _active_profile(cfg: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Resolve the active provider profile: AUTOML_LLM_PROFILE env var wins,
+    then models.yaml's `active_profile`. Returns None for legacy configs
+    without a `profiles` section (per-node provider/model then applies)."""
+    profiles = cfg.get("profiles") or {}
+    if not profiles:
+        return None
+    name = os.environ.get("AUTOML_LLM_PROFILE") or cfg.get("active_profile")
+    if not name:
+        return None
+    if name not in profiles:
+        raise ValueError(f"unknown LLM profile '{name}' — available profiles: {sorted(profiles)}")
+    return profiles[name]
+
+
 def node_model_config(node: str) -> dict[str, Any]:
+    """Effective provider/model/generation-params for a node.
+
+    Resolution order (see docs/superpowers/specs/2026-07-06-llm-provider-
+    profiles-design.md):
+      1. `default` + `nodes.<node>` merge — generation params, plus legacy
+         per-node provider/model for configs predating profiles.
+      2. The active profile (AUTOML_LLM_PROFILE env or `active_profile`)
+         supplies provider + model, with per-node model tiers from
+         `profiles.<name>.nodes.<node>.model`.
+      3. AUTOML_LLM_PROVIDER / AUTOML_LLM_MODEL env vars force a provider /
+         one model id across every node (read per call — switching needs no
+         yaml edit, just a process restart).
+    """
     cfg = _models_config()
     merged = dict(cfg.get("default", {}))
     merged.update(cfg.get("nodes", {}).get(node, {}))
+
+    profile = _active_profile(cfg)
+    if profile is not None:
+        merged["provider"] = profile["provider"]
+        node_override = (profile.get("nodes") or {}).get(node) or {}
+        merged["model"] = node_override.get("model", profile["model"])
+
+    if os.environ.get("AUTOML_LLM_PROVIDER"):
+        merged["provider"] = os.environ["AUTOML_LLM_PROVIDER"]
+    if os.environ.get("AUTOML_LLM_MODEL"):
+        merged["model"] = os.environ["AUTOML_LLM_MODEL"]
+
     if "provider" not in merged or "model" not in merged:
         raise ValueError(f"No provider/model configured for node '{node}' in config/models.yaml")
     return merged
