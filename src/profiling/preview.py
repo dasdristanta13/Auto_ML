@@ -86,26 +86,30 @@ def column_detail(
 
     result: dict[str, Any] = {"column": column, "dtype": str(series.dtype), "is_numeric": is_numeric}
 
-    if is_numeric and len(non_null) > 0:
-        counts, edges = np.histogram(non_null, bins=HISTOGRAM_BINS)
-        result["histogram"] = {"counts": [int(c) for c in counts], "bin_edges": [float(e) for e in edges]}
-        result["stats"] = {
-            "mean": float(non_null.mean()),
-            "median": float(non_null.median()),
-            "std": float(non_null.std()) if len(non_null) > 1 else 0.0,
-            "min": float(non_null.min()),
-            "max": float(non_null.max()),
-            "p25": float(non_null.quantile(0.25)),
-            "p75": float(non_null.quantile(0.75)),
-            "skew": float(non_null.skew()) if len(non_null) > 2 else 0.0,
-            "kurtosis": float(non_null.kurt()) if len(non_null) > 3 else 0.0,
-        }
-        if target_column and target_column in df.columns and target_column != column:
-            target = df[target_column]
-            if pd.api.types.is_numeric_dtype(target):
-                paired = pd.concat([series, target], axis=1).dropna()
-                if len(paired) > 1:
-                    result["correlation_with_target"] = float(paired[column].corr(paired[target_column]))
+    if is_numeric:
+        if len(non_null) > 0:
+            counts, edges = np.histogram(non_null, bins=HISTOGRAM_BINS)
+            result["histogram"] = {"counts": [int(c) for c in counts], "bin_edges": [float(e) for e in edges]}
+            result["stats"] = {
+                "mean": float(non_null.mean()),
+                "median": float(non_null.median()),
+                "std": float(non_null.std()) if len(non_null) > 1 else 0.0,
+                "min": float(non_null.min()),
+                "max": float(non_null.max()),
+                "p25": float(non_null.quantile(0.25)),
+                "p75": float(non_null.quantile(0.75)),
+                "skew": float(non_null.skew()) if len(non_null) > 2 else 0.0,
+                "kurtosis": float(non_null.kurt()) if len(non_null) > 3 else 0.0,
+            }
+            if target_column and target_column in df.columns and target_column != column:
+                target = df[target_column]
+                if pd.api.types.is_numeric_dtype(target):
+                    paired = pd.concat([series, target], axis=1).dropna()
+                    if len(paired) > 1:
+                        result["correlation_with_target"] = float(paired[column].corr(paired[target_column]))
+        # else: numeric but entirely NaN — leave result with just column/dtype/is_numeric;
+        # no histogram/stats/top_values, so a consumer checking is_numeric gets a
+        # consistent (if data-less) shape rather than a mismatched one
     else:
         counts = non_null.astype(str).value_counts()
         result["top_values"] = {str(k): int(v) for k, v in counts.head(10).items()}

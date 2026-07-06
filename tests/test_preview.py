@@ -95,3 +95,10 @@ def test_column_detail_rejects_unknown_column():
     df = pd.DataFrame({"a": [1]})
     with pytest.raises(ValueError):
         column_detail(df, "nope")
+
+
+def test_column_detail_numeric_all_nan_does_not_fall_into_categorical_branch():
+    df = pd.DataFrame({"amount": pd.Series([float("nan"), float("nan"), float("nan")], dtype="float64")})
+    detail = column_detail(df, "amount")
+    assert detail["is_numeric"] is True
+    assert "top_values" not in detail
