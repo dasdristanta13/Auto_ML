@@ -9,7 +9,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.profiling.preview import MAX_PAGE_SIZE, paginate_rows
+from src.profiling.preview import MAX_PAGE_SIZE, column_detail, paginate_rows
 
 
 def _df():
@@ -66,3 +66,32 @@ def test_paginate_converts_nan_to_none():
     df = pd.DataFrame({"a": [1, None]})
     result = paginate_rows(df, page=1, page_size=10)
     assert result["rows"][1]["a"] is None
+
+
+def test_column_detail_numeric_has_histogram_and_stats():
+    df = pd.DataFrame({"amount": [1.0, 2.0, 3.0, 4.0, 5.0]})
+    detail = column_detail(df, "amount")
+    assert detail["is_numeric"] is True
+    assert len(detail["histogram"]["counts"]) > 0
+    assert detail["stats"]["mean"] == 3.0
+    assert detail["stats"]["min"] == 1.0
+    assert detail["stats"]["max"] == 5.0
+
+
+def test_column_detail_categorical_has_top_values():
+    df = pd.DataFrame({"plan": ["a", "a", "b", "c"]})
+    detail = column_detail(df, "plan")
+    assert detail["is_numeric"] is False
+    assert detail["top_values"]["a"] == 2
+
+
+def test_column_detail_computes_correlation_with_numeric_target():
+    df = pd.DataFrame({"x": [1, 2, 3, 4], "y": [2, 4, 6, 8]})
+    detail = column_detail(df, "x", target_column="y")
+    assert detail["correlation_with_target"] == pytest.approx(1.0)
+
+
+def test_column_detail_rejects_unknown_column():
+    df = pd.DataFrame({"a": [1]})
+    with pytest.raises(ValueError):
+        column_detail(df, "nope")

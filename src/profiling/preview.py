@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
 
 MAX_PAGE_SIZE = 200
@@ -70,3 +71,48 @@ def paginate_rows(
         "page_size": page_size,
         "duplicate_row_indices": duplicate_row_indices,
     }
+
+
+def column_detail(
+    df: pd.DataFrame,
+    column: str,
+    target_column: Optional[str] = None,
+) -> dict[str, Any]:
+    if column not in df.columns:
+        raise ValueError(f"unknown column '{column}'")
+    series = df[column]
+    is_numeric = pd.api.types.is_numeric_dtype(series)
+    non_null = series.dropna()
+
+    result: dict[str, Any] = {"column": column, "dtype": str(series.dtype), "is_numeric": is_numeric}
+
+    if is_numeric and len(non_null) > 0:
+        counts, edges = np.histogram(non_null, bins=HISTOGRAM_BINS)
+        result["histogram"] = {"counts": [int(c) for c in counts], "bin_edges": [float(e) for e in edges]}
+        result["stats"] = {
+            "mean": float(non_null.mean()),
+            "median": float(non_null.median()),
+            "std": float(non_null.std()) if len(non_null) > 1 else 0.0,
+            "min": float(non_null.min()),
+            "max": float(non_null.max()),
+            "p25": float(non_null.quantile(0.25)),
+            "p75": float(non_null.quantile(0.75)),
+            "skew": float(non_null.skew()) if len(non_null) > 2 else 0.0,
+            "kurtosis": float(non_null.kurt()) if len(non_null) > 3 else 0.0,
+        }
+        if target_column and target_column in df.columns and target_column != column:
+            target = df[target_column]
+            if pd.api.types.is_numeric_dtype(target):
+                paired = pd.concat([series, target], axis=1).dropna()
+                if len(paired) > 1:
+                    result["correlation_with_target"] = float(paired[column].corr(paired[target_column]))
+    else:
+        counts = non_null.astype(str).value_counts()
+        result["top_values"] = {str(k): int(v) for k, v in counts.head(10).items()}
+        result["rare_values"] = {str(k): int(v) for k, v in counts.tail(10).items()} if len(counts) > 10 else {}
+        sample_size = min(5, len(non_null))
+        result["random_samples"] = (
+            [str(v) for v in non_null.sample(sample_size, random_state=0)] if sample_size else []
+        )
+
+    return result
