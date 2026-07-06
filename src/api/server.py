@@ -31,6 +31,7 @@ from typing import Any, Optional
 
 import os
 
+import pandas as pd
 import yaml
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response
@@ -38,6 +39,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.auth.session import create_session, destroy_session, get_session
+from src.data_io import load_dataset
 from src.export.script_export import generate_training_script
 from src.graph.build_graph import build_intake_graph, build_prep_graph, build_train_graph
 from src.agents.chat_node import answer_chat_question
@@ -53,6 +55,26 @@ app = FastAPI(title="Agentic AutoML")
 
 _runs: dict[str, dict[str, Any]] = {}
 _lock = threading.Lock()
+
+_dataset_df_cache: dict[str, pd.DataFrame] = {}
+_dataset_df_cache_lock = threading.Lock()
+
+
+def _get_cached_df(run_id: str, dataset_path: str) -> pd.DataFrame:
+    """Runs are immutable once created (their CSV never changes), so this
+    cache never needs invalidation — only lazy population."""
+    with _dataset_df_cache_lock:
+        if run_id not in _dataset_df_cache:
+            _dataset_df_cache[run_id] = load_dataset(dataset_path)
+        return _dataset_df_cache[run_id]
+
+
+def _dataset_df_for_run(run_id: str, entry: dict[str, Any]) -> pd.DataFrame:
+    dataset_path = entry["state"].get("dataset_path")
+    if not dataset_path or not Path(dataset_path).exists():
+        raise HTTPException(status_code=404, detail="dataset file is no longer available for this run")
+    return _get_cached_df(run_id, dataset_path)
+
 
 _intake_graph = build_intake_graph()
 _prep_graph = build_prep_graph()
@@ -495,6 +517,27 @@ def list_runs(_session: dict[str, Any] = Depends(require_session)) -> list[dict[
                 "source_run_id": entry.get("source_run_id"),
             }
             for run_id, entry in sorted(_runs.items(), key=lambda kv: -kv[1]["created_at"])
+        ]
+
+
+@app.get("/api/datasets")
+def list_datasets(_session: dict[str, Any] = Depends(require_session)) -> list[dict[str, Any]]:
+    """A 'dataset' is a top-level run (no source_run_id) — a re-run
+    experiment reuses its source's dataset file and is not listed separately
+    (see docs/superpowers/specs/2026-07-06-dataset-preview-design.md)."""
+    with _lock:
+        return [
+            {
+                "run_id": run_id,
+                "filename": entry["filename"],
+                "status": entry["status"],
+                "created_at": entry["created_at"],
+                "row_count": entry["state"].get("profile", {}).get("row_count"),
+                "column_count": entry["state"].get("profile", {}).get("column_count"),
+                "quality_score": (entry["state"].get("profile", {}).get("quality") or {}).get("overall"),
+            }
+            for run_id, entry in sorted(_runs.items(), key=lambda kv: -kv[1]["created_at"])
+            if not entry.get("source_run_id")
         ]
 
 
