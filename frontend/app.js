@@ -1061,6 +1061,7 @@ function render(run) {
     !["profiling", "running", "awaiting_confirmation", "awaiting_feature_approval"].includes(run.status)
   );
 
+  renderChampionBanner(run);
   renderStatCards(run);
   renderStageTracker(run);
   renderReasoningRail(run);
@@ -1082,6 +1083,59 @@ function render(run) {
   renderCaveats(run);
   renderErrors(run);
 }
+
+/* ================= champion banner ================= */
+
+function renderChampionBanner(run) {
+  const best = run.best_model || {};
+  const card = $("champion-banner");
+  if (!best.candidate_name) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+
+  $("champion-banner-name").textContent = best.candidate_name;
+
+  const metric = (run.task_spec || {}).metric;
+  const results = run.training_results || [];
+  // NOTE: deliberately not `(best.tuning || {}).lower_is_better` (as the task
+  // brief's snippet used) — src/training/dispatch.py hardcodes
+  // tuning.lower_is_better to False whenever tuning was skipped/disabled for
+  // the winning candidate (the common case), even for rmse/mae. That would
+  // invert the delta sign and pick the wrong runner-up for regression runs.
+  // Mirror the same rule src/graph/nodes.py:338 and
+  // src/insights/auto_insights.py:140 use to pick `best` in the first place,
+  // so ranking here stays consistent with how "best" was actually chosen.
+  const lowerIsBetter = metric === "rmse" || metric === "mae";
+  const sorted = [...results]
+    .filter((r) => r.status === "succeeded" && metric && r.metrics && metric in r.metrics)
+    .sort((a, b) => (lowerIsBetter ? a.metrics[metric] - b.metrics[metric] : b.metrics[metric] - a.metrics[metric]));
+  const runnerUp = sorted.find((r) => r.run_id !== best.run_id);
+
+  const stats = [];
+  if (metric && best.metrics && metric in best.metrics) {
+    const bestScore = Number(best.metrics[metric]);
+    let deltaText = "";
+    if (runnerUp) {
+      const delta = lowerIsBetter ? runnerUp.metrics[metric] - bestScore : bestScore - runnerUp.metrics[metric];
+      deltaText = ` <span class="champion-delta">${delta >= 0 ? "+" : ""}${delta.toFixed(3)} vs next best</span>`;
+    }
+    stats.push(`<div><span class="champion-stat-label">${escapeHtml(metric.toUpperCase())}</span><strong>${bestScore.toFixed(3)}</strong>${deltaText}</div>`);
+  }
+  if (best.duration_seconds != null) {
+    stats.push(`<div><span class="champion-stat-label">Training Time</span><strong>${formatDuration(best.duration_seconds)}</strong></div>`);
+  }
+  if (best.cv_folds) {
+    stats.push(`<div><span class="champion-stat-label">Cross Validation</span><strong>${best.cv_folds} Fold${best.resampling_applied ? ` + ${best.resampling_applied.replaceAll("_", " ")}` : ""}</strong></div>`);
+  }
+  $("champion-banner-stats").innerHTML = stats.join("");
+
+  $("champion-download-btn").classList.toggle("hidden", !run.report);
+}
+
+$("champion-compare-btn").addEventListener("click", () => switchRunTab("models"));
+$("champion-download-btn").addEventListener("click", (e) => {
+  e.preventDefault();
+  $("export-report-btn").click();
+});
 
 /* ================= stat cards ================= */
 
