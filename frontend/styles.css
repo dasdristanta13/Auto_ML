@@ -767,3 +767,22 @@ select, textarea, input[type="text"], input[type="number"] {
 .dataset-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .dataset-row-name { font-weight: 650; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dataset-row-meta { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+
+/* ================= dataset detail ================= */
+
+.breadcrumb { display: flex; align-items: center; gap: 8px; font-size: var(--text-sm); margin-bottom: var(--sp-2); }
+.breadcrumb-link { font: inherit; background: none; border: none; color: var(--accent-primary); cursor: pointer; padding: 0; }
+.breadcrumb-sep { color: var(--text-secondary); }
+#dataset-breadcrumb-name { font-weight: 650; }
+
+.dataset-tab-bar { margin-bottom: 0; }
+.dataset-tab-bar .tab-btn.disabled { cursor: default; opacity: 0.45; }
+.dataset-tab-bar .tab-btn.disabled:hover { color: var(--text-secondary); }
+.dataset-tab-bar em { font-style: normal; font-size: 10px; margin-left: 4px; border: 1px solid currentColor; border-radius: 999px; padding: 1px 6px; opacity: 0.8; }
+
+.column-explorer {
+  position: fixed; top: 0; right: 0; height: 100vh; width: min(420px, 100vw);
+  background: var(--bg-surface); border-left: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow); padding: var(--sp-4); overflow-y: auto; z-index: 20;
+}
+.column-explorer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--sp-3); }

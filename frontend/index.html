@@ -466,6 +466,62 @@
         <div class="datasets-list" id="datasets-list"></div>
       </section>
     </main>
+
+    <!-- ============ dataset detail ============ -->
+    <main class="content hidden" id="dataset-detail-view">
+      <div class="breadcrumb">
+        <button type="button" class="breadcrumb-link" id="dataset-breadcrumb-back">Datasets</button>
+        <span class="breadcrumb-sep">/</span>
+        <span id="dataset-breadcrumb-name"></span>
+      </div>
+
+      <div class="tab-bar dataset-tab-bar" role="tablist">
+        <button class="tab-btn active" id="dtab-data-btn" type="button" role="tab" aria-selected="true">Data</button>
+        <span class="tab-btn disabled" title="Not available in this local build">Overview <em>soon</em></span>
+        <span class="tab-btn disabled" title="Not available in this local build">Profile <em>soon</em></span>
+        <span class="tab-btn disabled" title="Not available in this local build">Features <em>soon</em></span>
+        <span class="tab-btn disabled" title="Not available in this local build">Relationships <em>soon</em></span>
+        <span class="tab-btn disabled" title="Not available in this local build">Versions <em>soon</em></span>
+        <span class="tab-btn disabled" title="Not available in this local build">Settings <em>soon</em></span>
+      </div>
+
+      <section class="stat-row" id="dataset-kpi-row"></section>
+
+      <section class="card">
+        <div class="card-head">
+          <h3>Data Preview</h3>
+          <div class="preview-toolbar">
+            <input type="text" id="preview-search" class="preview-search" placeholder="Search…" />
+            <div class="preview-colvis" id="preview-colvis"></div>
+          </div>
+        </div>
+        <div class="preview-table-scroll" id="preview-table-scroll">
+          <table class="preview-table" id="preview-table"></table>
+        </div>
+        <div class="preview-pager" id="preview-pager"></div>
+      </section>
+
+      <section class="card">
+        <div class="tab-bar" role="tablist">
+          <button class="tab-btn active" id="ptab-summary-btn" type="button" role="tab" aria-selected="true">Column Summary</button>
+          <button class="tab-btn" id="ptab-correlations-btn" type="button" role="tab" aria-selected="false">Correlations</button>
+          <button class="tab-btn" id="ptab-missing-btn" type="button" role="tab" aria-selected="false">Missing Values</button>
+          <button class="tab-btn" id="ptab-outliers-btn" type="button" role="tab" aria-selected="false">Outliers</button>
+        </div>
+        <div id="ptab-summary-panel"></div>
+        <div id="ptab-correlations-panel" class="hidden"></div>
+        <div id="ptab-missing-panel" class="hidden"></div>
+        <div id="ptab-outliers-panel" class="hidden"></div>
+      </section>
+
+      <div class="column-explorer hidden" id="column-explorer">
+        <div class="column-explorer-head">
+          <h3 id="column-explorer-name"></h3>
+          <button type="button" class="btn ghost" id="column-explorer-close">Close</button>
+        </div>
+        <div id="column-explorer-body"></div>
+      </div>
+    </main>
   </div>
 </div>
 

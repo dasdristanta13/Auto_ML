@@ -90,6 +90,7 @@ let currentRunStatus = null;
 let selectedFile = null;
 let lastRun = null;
 let predictFormLoadedFor = null;
+let currentDatasetRunId = null;
 
 /* ================= theme ================= */
 
@@ -131,6 +132,7 @@ function showIntakeView() {
   currentRunId = null;
   $("run-view").classList.add("hidden");
   $("datasets-view").classList.add("hidden");
+  $("dataset-detail-view").classList.add("hidden");
   $("intake-view").classList.remove("hidden");
   setActiveNav("nav-new");
   $("header-eyebrow").textContent = "Agentic AutoML";
@@ -152,6 +154,7 @@ function showIntakeView() {
 function showRunView() {
   $("intake-view").classList.add("hidden");
   $("datasets-view").classList.add("hidden");
+  $("dataset-detail-view").classList.add("hidden");
   $("run-view").classList.remove("hidden");
   setActiveNav("nav-dashboard");
 }
@@ -201,6 +204,28 @@ async function loadDatasetsList() {
     el.addEventListener("click", () => openDatasetDetail(el.dataset.runId));
   });
 }
+
+function showDatasetDetailView() {
+  $("datasets-view").classList.add("hidden");
+  $("dataset-detail-view").classList.remove("hidden");
+  setActiveNav("nav-datasets");
+}
+
+async function openDatasetDetail(runId) {
+  currentDatasetRunId = runId;
+  showDatasetDetailView();
+  $("column-explorer").classList.add("hidden");
+  let run;
+  try {
+    run = await (await authFetch(`/api/runs/${runId}`)).json();
+  } catch {
+    $("dataset-breadcrumb-name").textContent = "Could not load dataset";
+    return;
+  }
+  $("dataset-breadcrumb-name").textContent = run.filename;
+}
+
+$("dataset-breadcrumb-back").addEventListener("click", showDatasetsView);
 
 /* ================= recent runs (sidebar) ================= */
 
