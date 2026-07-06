@@ -320,7 +320,9 @@ async function fetchAndRenderPreviewPage() {
 
   let data;
   try {
-    data = await (await authFetch(`/api/runs/${currentDatasetRunId}/preview?${params}`)).json();
+    const res = await authFetch(`/api/runs/${currentDatasetRunId}/preview?${params}`);
+    if (!res.ok) throw new Error("failed to load preview");
+    data = await res.json();
   } catch {
     $("preview-table").innerHTML = `<tr><td>Could not load preview.</td></tr>`;
     return;
@@ -366,7 +368,7 @@ function renderPreviewTable(data) {
         const pct = range && range.max > range.min ? (value - range.min) / (range.max - range.min) : 0;
         html += `<td class="num preview-cell-numeric" style="background:linear-gradient(90deg, var(--accent-primary-soft) ${(pct * 100).toFixed(0)}%, transparent ${(pct * 100).toFixed(0)}%)">${escapeHtml(String(value))}</td>`;
       } else if (type === "boolean") {
-        html += `<td><span class="chip ${value ? "detected" : "flagged"}">${String(value)}</span></td>`;
+        html += `<td><span class="chip ${value ? "detected" : "flagged"}">${escapeHtml(String(value))}</span></td>`;
       } else if (type === "categorical") {
         html += `<td><span class="chip detected">${escapeHtml(String(value))}</span></td>`;
       } else {
