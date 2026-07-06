@@ -222,3 +222,25 @@ def test_detect_outliers_caps_examples_at_configured_max():
     df = pd.DataFrame({"amount": values})
     result = detect_outliers(df, method="iqr")
     assert len(result["example_row_indices"]) <= MAX_OUTLIER_EXAMPLES
+
+
+def test_detect_outliers_lof_handles_entirely_null_numeric_column():
+    # An entirely-NaN column means c.mean() is also NaN, so the first
+    # fillna(c.mean()) leaves it full of NaN. LocalOutlierFactor.fit_predict
+    # raises ValueError on NaN input (unlike IsolationForest, which tolerates
+    # it) -- this must not crash.
+    df = pd.DataFrame({"x": list(range(30)), "y": [None] * 30})
+    result = detect_outliers(df, method="lof")
+    assert result["method"] == "lof"
+    assert "outlier_count" in result
+    assert "affected_columns" in result
+    assert "example_row_indices" in result
+
+
+def test_detect_outliers_isolation_forest_handles_entirely_null_numeric_column():
+    df = pd.DataFrame({"x": list(range(30)), "y": [None] * 30})
+    result = detect_outliers(df, method="isolation_forest")
+    assert result["method"] == "isolation_forest"
+    assert "outlier_count" in result
+    assert "affected_columns" in result
+    assert "example_row_indices" in result

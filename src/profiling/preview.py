@@ -211,6 +211,7 @@ def detect_outliers(df: pd.DataFrame, method: str = "iqr") -> dict[str, Any]:
             outlier_mask |= col_mask
     else:
         subset = df[numeric_cols].apply(lambda c: c.fillna(c.mean()))
+        subset = subset.fillna(0.0)  # catches columns that were entirely NaN, whose mean is also NaN
         if len(subset) < 2:
             return {"method": method, "outlier_count": 0, "affected_columns": [], "example_row_indices": []}
         if method == "isolation_forest":
