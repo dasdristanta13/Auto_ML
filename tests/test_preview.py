@@ -9,7 +9,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.profiling.preview import MAX_PAGE_SIZE, column_detail, paginate_rows
+from src.profiling.preview import MAX_PAGE_SIZE, column_detail, correlation_matrix, paginate_rows
 
 
 def _df():
@@ -102,3 +102,32 @@ def test_column_detail_numeric_all_nan_does_not_fall_into_categorical_branch():
     detail = column_detail(df, "amount")
     assert detail["is_numeric"] is True
     assert "top_values" not in detail
+
+
+def test_correlation_matrix_pearson_perfect_correlation():
+    df = pd.DataFrame({"x": [1, 2, 3, 4], "y": [2, 4, 6, 8], "z": ["a", "b", "c", "d"]})
+    result = correlation_matrix(df, method="pearson")
+    assert result["columns"] == ["x", "y"]
+    x_idx, y_idx = 0, 1
+    assert result["matrix"][x_idx][y_idx] == pytest.approx(1.0)
+    assert result["matrix"][x_idx][x_idx] == pytest.approx(1.0)
+    assert result["truncated"] is False
+
+
+def test_correlation_matrix_rejects_unknown_method():
+    df = pd.DataFrame({"x": [1, 2, 3]})
+    with pytest.raises(ValueError):
+        correlation_matrix(df, method="bogus")
+
+
+def test_correlation_matrix_mutual_info_diagonal_is_one():
+    df = pd.DataFrame({"x": range(20), "y": list(range(10)) * 2})
+    result = correlation_matrix(df, method="mutual_info")
+    assert result["matrix"][0][0] == 1.0
+    assert result["matrix"][1][1] == 1.0
+
+
+def test_correlation_matrix_handles_fewer_than_two_numeric_columns():
+    df = pd.DataFrame({"x": [1, 2, 3], "z": ["a", "b", "c"]})
+    result = correlation_matrix(df, method="pearson")
+    assert result["matrix"] == []

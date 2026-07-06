@@ -120,3 +120,38 @@ def column_detail(
         )
 
     return result
+
+
+def correlation_matrix(df: pd.DataFrame, method: str = "pearson") -> dict[str, Any]:
+    if method not in VALID_CORRELATION_METHODS:
+        raise ValueError(f"unknown correlation method '{method}'")
+
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    truncated = False
+    if len(numeric_cols) > CORRELATION_MAX_COLUMNS:
+        variances = df[numeric_cols].var().sort_values(ascending=False)
+        numeric_cols = list(variances.head(CORRELATION_MAX_COLUMNS).index)
+        truncated = True
+
+    if len(numeric_cols) < 2:
+        return {"method": method, "columns": numeric_cols, "matrix": [], "truncated": truncated}
+
+    if method == "mutual_info":
+        from sklearn.feature_selection import mutual_info_regression
+
+        subset = df[numeric_cols].dropna()
+        n = len(numeric_cols)
+        matrix = [[0.0] * n for _ in range(n)]
+        if len(subset) >= 2:
+            for i, col_a in enumerate(numeric_cols):
+                other_cols = [c for c in numeric_cols if c != col_a]
+                mi = mutual_info_regression(subset[other_cols], subset[col_a], random_state=0)
+                for value, col_b in zip(mi, other_cols):
+                    matrix[i][numeric_cols.index(col_b)] = float(value)
+        for i in range(n):
+            matrix[i][i] = 1.0
+    else:
+        corr = df[numeric_cols].corr(method=method).fillna(0.0)
+        matrix = [[float(corr.loc[a, b]) for b in numeric_cols] for a in numeric_cols]
+
+    return {"method": method, "columns": numeric_cols, "matrix": matrix, "truncated": truncated}
