@@ -31,6 +31,7 @@ from typing import Any, Optional
 
 import os
 
+import pandas as pd
 import yaml
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response
@@ -38,10 +39,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.auth.session import create_session, destroy_session, get_session
+from src.data_io import load_dataset
 from src.export.script_export import generate_training_script
 from src.graph.build_graph import build_intake_graph, build_prep_graph, build_train_graph
 from src.agents.chat_node import answer_chat_question
 from src.insights.auto_insights import generate_insights, suggested_questions
+from src.profiling import preview
 from src.profiling.heuristics import target_too_high_cardinality_for_classification
 from src.llm.tracing import read_trace
 from src.state import PipelineState, new_state
@@ -53,6 +56,26 @@ app = FastAPI(title="Agentic AutoML")
 
 _runs: dict[str, dict[str, Any]] = {}
 _lock = threading.Lock()
+
+_dataset_df_cache: dict[str, pd.DataFrame] = {}
+_dataset_df_cache_lock = threading.Lock()
+
+
+def _get_cached_df(run_id: str, dataset_path: str) -> pd.DataFrame:
+    """Runs are immutable once created (their CSV never changes), so this
+    cache never needs invalidation — only lazy population."""
+    with _dataset_df_cache_lock:
+        if run_id not in _dataset_df_cache:
+            _dataset_df_cache[run_id] = load_dataset(dataset_path)
+        return _dataset_df_cache[run_id]
+
+
+def _dataset_df_for_run(run_id: str, entry: dict[str, Any]) -> pd.DataFrame:
+    dataset_path = entry["state"].get("dataset_path")
+    if not dataset_path or not Path(dataset_path).exists():
+        raise HTTPException(status_code=404, detail="dataset file is no longer available for this run")
+    return _get_cached_df(run_id, dataset_path)
+
 
 _intake_graph = build_intake_graph()
 _prep_graph = build_prep_graph()
@@ -389,6 +412,7 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
                 .get("pii_report", {})
                 .get("pii_columns_detected"),
                 "quality": state.get("profile", {}).get("quality"),
+                "memory_bytes": state.get("profile", {}).get("memory_bytes"),
             },
             "profile_columns": _profile_columns(state),
             "leakage_flags": state.get("leakage_flags", []),
@@ -495,6 +519,27 @@ def list_runs(_session: dict[str, Any] = Depends(require_session)) -> list[dict[
                 "source_run_id": entry.get("source_run_id"),
             }
             for run_id, entry in sorted(_runs.items(), key=lambda kv: -kv[1]["created_at"])
+        ]
+
+
+@app.get("/api/datasets")
+def list_datasets(_session: dict[str, Any] = Depends(require_session)) -> list[dict[str, Any]]:
+    """A 'dataset' is a top-level run (no source_run_id) — a re-run
+    experiment reuses its source's dataset file and is not listed separately
+    (see docs/superpowers/specs/2026-07-06-dataset-preview-design.md)."""
+    with _lock:
+        return [
+            {
+                "run_id": run_id,
+                "filename": entry["filename"],
+                "status": entry["status"],
+                "created_at": entry["created_at"],
+                "row_count": entry["state"].get("profile", {}).get("row_count"),
+                "column_count": entry["state"].get("profile", {}).get("column_count"),
+                "quality_score": (entry["state"].get("profile", {}).get("quality") or {}).get("overall"),
+            }
+            for run_id, entry in sorted(_runs.items(), key=lambda kv: -kv[1]["created_at"])
+            if not entry.get("source_run_id")
         ]
 
 
@@ -696,6 +741,101 @@ def predict(
 def get_trace(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> list[dict[str, Any]]:
     _get_entry(run_id)
     return _json_safe(read_trace(run_id))
+
+
+@app.get("/api/runs/{run_id}/preview")
+def get_dataset_preview(
+    run_id: str,
+    page: int = 1,
+    page_size: int = 50,
+    sort_by: Optional[str] = None,
+    sort_dir: str = "asc",
+    search: Optional[str] = None,
+    _session: dict[str, Any] = Depends(require_session),
+) -> dict[str, Any]:
+    entry = _get_entry(run_id)
+    df = _dataset_df_for_run(run_id, entry)
+    try:
+        result = preview.paginate_rows(
+            df, page=page, page_size=page_size, sort_by=sort_by, sort_dir=sort_dir, search=search
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    pii_columns = (entry["state"].get("profile", {}).get("pii_report", {}) or {}).get("columns", {}) or {}
+    result["pii_columns"] = sorted(pii_columns)
+    return _json_safe(result)
+
+
+@app.get("/api/runs/{run_id}/columns/{column}")
+def get_column_detail(
+    run_id: str, column: str, _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
+    entry = _get_entry(run_id)
+    df = _dataset_df_for_run(run_id, entry)
+    if column not in df.columns:
+        raise HTTPException(status_code=404, detail=f"unknown column '{column}'")
+    task_spec = entry["state"].get("task_spec") or {}
+    result = preview.column_detail(df, column, target_column=task_spec.get("target_column"))
+
+    feature_plan = entry["state"].get("feature_plan") or {}
+    matching_steps = [s for s in feature_plan.get("steps", []) if column in (s.get("columns") or [])]
+    leakage_flags = [f for f in entry["state"].get("leakage_flags", []) if f.get("column") == column]
+    if matching_steps or leakage_flags:
+        result["ml_insights"] = {
+            "analyzed": True,
+            "recommended_steps": [{"op": s.get("op"), "rationale": s.get("rationale")} for s in matching_steps],
+            "leakage_flags": leakage_flags,
+        }
+    else:
+        result["ml_insights"] = {"analyzed": False}
+    return _json_safe(result)
+
+
+@app.get("/api/runs/{run_id}/correlations")
+def get_correlations(
+    run_id: str, method: str = "pearson", _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
+    entry = _get_entry(run_id)
+    df = _dataset_df_for_run(run_id, entry)
+    try:
+        result = preview.correlation_matrix(df, method=method)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _json_safe(result)
+
+
+@app.get("/api/runs/{run_id}/missing-values")
+def get_missing_values(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> dict[str, Any]:
+    entry = _get_entry(run_id)
+    df = _dataset_df_for_run(run_id, entry)
+    return _json_safe(preview.missing_value_matrix(df))
+
+
+@app.get("/api/runs/{run_id}/outliers")
+def get_outliers(
+    run_id: str, method: str = "iqr", _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
+    entry = _get_entry(run_id)
+    df = _dataset_df_for_run(run_id, entry)
+    try:
+        result = preview.detect_outliers(df, method=method)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _json_safe(result)
+
+
+@app.get("/api/runs/{run_id}/dataset-summary")
+def get_dataset_summary(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> dict[str, Any]:
+    entry = _get_entry(run_id)
+    df = _dataset_df_for_run(run_id, entry)
+    profile = entry["state"].get("profile", {}) or {}
+    leakage_flags = entry["state"].get("leakage_flags", [])
+    return _json_safe(
+        {
+            "feature_type_counts": preview.feature_type_counts(df),
+            "ml_readiness_score": preview.ml_readiness_score(profile, leakage_flags),
+        }
+    )
 
 
 class ChatRequest(BaseModel):

@@ -7,9 +7,26 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+import pandas as pd
+
 ID_NAME_HINTS = ("id", "uuid", "guid", "key", "index")
 IMBALANCE_THRESHOLD = 0.15
 TARGET_CARDINALITY_RATIO_THRESHOLD = 0.5
+
+
+def iqr_outlier_mask(series: pd.Series) -> pd.Series:
+    """Boolean mask (aligned to series.index) of IQR-fence outliers. Shared
+    by src/profiling/eda.py's outlier-rate check and src/profiling/preview.py's
+    IQR outlier detector so both agree on what counts as an outlier."""
+    non_null = series.dropna()
+    if len(non_null) < 5:
+        return series.notna() & False
+    q1, q3 = non_null.quantile(0.25), non_null.quantile(0.75)
+    iqr = q3 - q1
+    if iqr == 0:
+        return series.notna() & False
+    lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+    return (series < lower) | (series > upper)
 
 
 def looks_like_identifier(name: str, dtype: str, n_unique: int, row_count: int) -> bool:

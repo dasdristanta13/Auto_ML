@@ -1,44 +1,59 @@
 # Which LLM provider+model powers each LangGraph node.
-# Switch providers per-node without touching code — src/llm/client.py reads this file.
 #
-# provider: one of "openai" | "openai" | "gemini"
-# model: the provider's model id
+# SWITCHING PROVIDERS — one line: set `active_profile` to anthropic | openai |
+# gemini. Or, without touching this file, set the AUTOML_LLM_PROFILE
+# environment variable (takes precedence over active_profile).
+# Escape hatches: AUTOML_LLM_MODEL forces one model id for every node;
+# AUTOML_LLM_PROVIDER forces the provider (use together for a custom combo).
 #
-# API keys are read from environment variables (see .env.example), never hardcoded here.
+# API keys come from environment variables (see .env.example):
+# ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY — never hardcoded here.
 
+active_profile: openai
+
+profiles:
+  openai:
+    provider: openai
+    model: gpt-5-nano
+
+  anthropic:
+    provider: anthropic
+    model: claude-haiku-4-5 # cheap/fast tier for simple nodes
+    nodes:
+      # stronger model where planning quality matters most (CLAUDE.md:
+      # "cheaper/faster model for simple routing decisions, stronger model
+      # for planning")
+      feature_engineering: { model: claude-opus-4-8 }
+      model_selection: { model: claude-opus-4-8 }
+      report: { model: claude-opus-4-8 }
+
+  gemini:
+    provider: gemini
+    model: gemini-2.5-flash
+
+# Generation parameters per node — provider-independent, shared by every
+# profile. The active profile supplies provider+model; these supply the rest.
 default:
-  provider: openai
-  model: gpt-5-nano
   temperature: 0.0
   max_tokens: 4096
 
 nodes:
   understand_usecase:
-    provider: openai
-    model: gpt-5-nano
     temperature: 0.0
     max_tokens: 2048
 
   feature_engineering:
-    provider: openai
-    model: gpt-5-nano
     temperature: 0.0
     max_tokens: 4096
 
   model_selection:
-    provider: openai
-    model: gpt-5-nano
     temperature: 0.0
     max_tokens: 2048
 
   report:
-    provider: openai
-    model: gpt-5-nano
     temperature: 0.2
     max_tokens: 4096
 
   chat:
-    provider: openai
-    model: gpt-5-nano
     temperature: 0.2
     max_tokens: 1024

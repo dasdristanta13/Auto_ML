@@ -23,7 +23,7 @@ from typing import Any, Optional
 import pandas as pd
 
 from src.insights.auto_insights import profile_insights
-from src.profiling.heuristics import IMBALANCE_THRESHOLD, looks_like_identifier, minority_ratio
+from src.profiling.heuristics import IMBALANCE_THRESHOLD, iqr_outlier_mask, looks_like_identifier, minority_ratio
 
 _MIN_ROWS_FOR_IDENTIFIER_CHECK = 20
 _HIGH_CARDINALITY_MIN_UNIQUE = 20
@@ -39,12 +39,7 @@ def _step(op: str, columns: list[str], params: dict[str, Any], rationale: str) -
 def _iqr_outlier_rate(series: pd.Series) -> float:
     if len(series) < 5:
         return 0.0
-    q1, q3 = series.quantile(0.25), series.quantile(0.75)
-    iqr = q3 - q1
-    if iqr == 0:
-        return 0.0
-    lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-    return float(((series < lower) | (series > upper)).mean())
+    return float(iqr_outlier_mask(series).mean())
 
 
 def _looks_datetime(name: str, series: pd.Series) -> bool:

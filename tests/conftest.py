@@ -20,3 +20,18 @@ def _bypass_auth_by_default():
     server.app.dependency_overrides[server.require_session] = lambda: {"email": "test@local"}
     yield
     server.app.dependency_overrides.pop(server.require_session, None)
+
+
+@pytest.fixture(autouse=True)
+def _clear_dataset_df_cache():
+    """_get_cached_df (src/api/server.py) memoizes DataFrames in a module-
+    level dict keyed only by run_id. Many test files reuse the same
+    convenience run_id ("run-1") with different tmp_path datasets via
+    monkeypatch.setitem(server._runs, ...) — but monkeypatch only reverts
+    _runs, not this separate cache, so a dataframe cached by one test file
+    leaks into the next test that happens to reuse the same run_id. Clear it
+    around every test so dataset-backed endpoints (preview, column detail)
+    stay order-independent across the whole suite."""
+    server._dataset_df_cache.clear()
+    yield
+    server._dataset_df_cache.clear()

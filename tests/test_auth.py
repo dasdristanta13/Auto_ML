@@ -109,6 +109,13 @@ def test_demo_credentials_endpoint_has_defaults_when_env_unset(client, monkeypat
         ("POST", "/api/runs/nonexistent/predict"),
         ("GET", "/api/runs/nonexistent/trace"),
         ("POST", "/api/runs/nonexistent/chat"),
+        ("GET", "/api/datasets"),
+        ("GET", "/api/runs/nonexistent/preview"),
+        ("GET", "/api/runs/nonexistent/columns/nonexistent"),
+        ("GET", "/api/runs/nonexistent/correlations"),
+        ("GET", "/api/runs/nonexistent/missing-values"),
+        ("GET", "/api/runs/nonexistent/outliers"),
+        ("GET", "/api/runs/nonexistent/dataset-summary"),
     ],
 )
 def test_protected_endpoints_401_without_a_session(client, method, path):

@@ -90,6 +90,9 @@ let currentRunStatus = null;
 let selectedFile = null;
 let lastRun = null;
 let predictFormLoadedFor = null;
+let currentDatasetRunId = null;
+let previewState = { page: 1, pageSize: 50, sortBy: null, sortDir: "asc", search: "" };
+let previewColumns = [];
 
 /* ================= theme ================= */
 
@@ -119,6 +122,7 @@ $("nav-dashboard").addEventListener("click", () => {
 });
 $("nav-new").addEventListener("click", showIntakeView);
 $("new-run-btn").addEventListener("click", showIntakeView);
+$("nav-datasets").addEventListener("click", showDatasetsView);
 
 function setActiveNav(id) {
   document.querySelectorAll(".nav-item.active").forEach((el) => el.classList.remove("active"));
@@ -129,6 +133,8 @@ function showIntakeView() {
   stopPolling();
   currentRunId = null;
   $("run-view").classList.add("hidden");
+  $("datasets-view").classList.add("hidden");
+  $("dataset-detail-view").classList.add("hidden");
   $("intake-view").classList.remove("hidden");
   setActiveNav("nav-new");
   $("header-eyebrow").textContent = "Agentic AutoML";
@@ -149,9 +155,519 @@ function showIntakeView() {
 
 function showRunView() {
   $("intake-view").classList.add("hidden");
+  $("datasets-view").classList.add("hidden");
+  $("dataset-detail-view").classList.add("hidden");
   $("run-view").classList.remove("hidden");
   setActiveNav("nav-dashboard");
 }
+
+function showDatasetsView() {
+  stopPolling();
+  currentRunId = null;
+  $("intake-view").classList.add("hidden");
+  $("run-view").classList.add("hidden");
+  $("dataset-detail-view")?.classList.add("hidden");
+  $("datasets-view").classList.remove("hidden");
+  setActiveNav("nav-datasets");
+  loadDatasetsList();
+}
+
+async function loadDatasetsList() {
+  const box = $("datasets-list");
+  let datasets = [];
+  try {
+    datasets = await (await authFetch("/api/datasets")).json();
+  } catch {
+    box.innerHTML = `<p class="muted small">Could not load datasets.</p>`;
+    return;
+  }
+  $("datasets-sub").textContent = `${datasets.length} dataset${datasets.length === 1 ? "" : "s"}`;
+  if (!datasets.length) {
+    box.innerHTML = `<p class="muted small">No datasets yet — start an experiment to upload one.</p>`;
+    return;
+  }
+  box.innerHTML = datasets
+    .map(
+      (d) => `
+    <button type="button" class="dataset-row" data-run-id="${d.run_id}">
+      <span class="dataset-row-main">
+        <span class="dataset-row-name">${escapeHtml(d.filename)}</span>
+        <span class="muted small">${d.row_count != null ? Number(d.row_count).toLocaleString() + " rows" : "…"} · ${d.column_count ?? "?"} columns</span>
+      </span>
+      <span class="dataset-row-meta">
+        ${d.quality_score != null ? `<span class="chip detected">${Math.round(d.quality_score * 100)}% quality</span>` : ""}
+        <span class="status-badge ${d.status}">${d.status.replaceAll("_", " ")}</span>
+        <span class="muted small">${relativeTime(d.created_at)}</span>
+      </span>
+    </button>`
+    )
+    .join("");
+  box.querySelectorAll(".dataset-row").forEach((el) => {
+    el.addEventListener("click", () => openDatasetDetail(el.dataset.runId));
+  });
+}
+
+function showDatasetDetailView() {
+  $("intake-view").classList.add("hidden");
+  $("run-view").classList.add("hidden");
+  $("datasets-view").classList.add("hidden");
+  $("dataset-detail-view").classList.remove("hidden");
+  setActiveNav("nav-datasets");
+}
+
+async function openDatasetDetail(runId) {
+  currentDatasetRunId = runId;
+  showDatasetDetailView();
+  $("column-explorer").classList.add("hidden");
+  let run;
+  try {
+    const res = await authFetch(`/api/runs/${runId}`);
+    if (!res.ok) throw new Error("failed to load dataset");
+    run = await res.json();
+  } catch {
+    $("dataset-breadcrumb-name").textContent = "Could not load dataset";
+    return;
+  }
+  $("dataset-breadcrumb-name").textContent = run.filename;
+
+  let summary = { feature_type_counts: {}, ml_readiness_score: 0 };
+  try {
+    summary = await (await authFetch(`/api/runs/${runId}/dataset-summary`)).json();
+  } catch { /* KPI row degrades gracefully to "—" placeholders */ }
+  renderDatasetKpis(run, summary);
+
+  previewState = { page: 1, pageSize: 50, sortBy: null, sortDir: "asc", search: "" };
+  $("preview-search").value = "";
+  await loadPreviewTable(run);
+
+  for (const tab of PROFILING_SUBTABS) $(`ptab-${tab}-panel`).dataset.loaded = "";
+  renderColumnSummaryTab(run);
+  switchProfilingSubtab("summary");
+}
+
+function renderDatasetKpis(run, summary) {
+  const profile = run.profile_summary || {};
+  const counts = summary.feature_type_counts || {};
+  const cards = [
+    { icon: "db", tint: "violet", label: "Total Rows", value: profile.row_count != null ? Number(profile.row_count).toLocaleString() : "—" },
+    { icon: "grid", tint: "violet", label: "Total Columns", value: String(profile.column_count ?? "—") },
+    { icon: "warning", tint: "amber", label: "Missing Values", value: profile.quality ? `${(100 - profile.quality.completeness * 100).toFixed(1)}%` : "—" },
+    { icon: "layers", tint: "amber", label: "Duplicate Rows", value: profile.quality ? String(profile.quality.duplicate_row_count) : "—" },
+    { icon: "file", tint: "violet", label: "Memory Usage", value: formatBytes(profile.memory_bytes) },
+    { icon: "sliders", tint: "green", label: "Numeric Features", value: String(counts.numeric ?? "—") },
+    { icon: "grid", tint: "green", label: "Categorical Features", value: String(counts.categorical ?? "—") },
+    { icon: "clock", tint: "green", label: "Datetime Features", value: String(counts.datetime ?? "—") },
+    { icon: "file", tint: "green", label: "Text Features", value: String(counts.text ?? "—") },
+    { icon: "shield", tint: "violet", label: "Data Quality Score", value: profile.quality ? `${Math.round(profile.quality.overall * 100)}%` : "—" },
+    { icon: "shield", tint: "violet", label: "ML Readiness Score", value: `${Math.round((summary.ml_readiness_score ?? 0) * 100)}%` },
+  ];
+  const targetCol = (run.task_spec || {}).target_column;
+  if (targetCol) {
+    cards.push({ icon: "trophy", tint: "violet", label: "Target Column", value: targetCol });
+  }
+  $("dataset-kpi-row").innerHTML = cards
+    .map(
+      (c) => `
+      <div class="stat-card">
+        <span class="stat-icon ${c.tint}">${ICONS[c.icon]}</span>
+        <div class="stat-body">
+          <div class="stat-label">${c.label}</div>
+          <div class="stat-value">${escapeHtml(c.value)}</div>
+        </div>
+      </div>`
+    )
+    .join("");
+}
+
+/* ================= profiling sub-tabs ================= */
+
+const PROFILING_SUBTABS = ["summary", "correlations", "missing", "outliers"];
+
+function switchProfilingSubtab(name) {
+  for (const tab of PROFILING_SUBTABS) {
+    const isActive = tab === name;
+    $(`ptab-${tab}-btn`).classList.toggle("active", isActive);
+    $(`ptab-${tab}-btn`).setAttribute("aria-selected", String(isActive));
+    $(`ptab-${tab}-panel`).classList.toggle("hidden", !isActive);
+  }
+  if (name === "correlations" && !$("ptab-correlations-panel").dataset.loaded) loadCorrelationsTab();
+  if (name === "missing" && !$("ptab-missing-panel").dataset.loaded) loadMissingValuesTab();
+  if (name === "outliers" && !$("ptab-outliers-panel").dataset.loaded) loadOutliersTab();
+}
+for (const tab of PROFILING_SUBTABS) {
+  $(`ptab-${tab}-btn`).addEventListener("click", () => switchProfilingSubtab(tab));
+}
+
+function renderColumnSummaryTab(run) {
+  const columns = run.profile_columns || [];
+  let html = "<table class=\"results-table\"><tr><th>Column</th><th>Type</th><th>Missing %</th><th>Unique %</th><th>Cardinality</th></tr>";
+  const rowCount = (run.profile_summary || {}).row_count || 1;
+  for (const c of columns) {
+    html += `<tr>
+      <td>${escapeHtml(c.name)}</td>
+      <td>${escapeHtml(c.dtype)}</td>
+      <td class="num">${((c.null_rate || 0) * 100).toFixed(1)}%</td>
+      <td class="num">${(((c.n_unique || 0) / rowCount) * 100).toFixed(1)}%</td>
+      <td class="num">${c.n_unique ?? "—"}</td>
+    </tr>`;
+  }
+  html += "</table>";
+  $("ptab-summary-panel").innerHTML = html;
+  $("ptab-summary-panel").dataset.loaded = "1";
+}
+
+/* ================= correlations sub-tab ================= */
+
+function renderCorrelationHeatmap(container, result, options = {}) {
+  const { columns, matrix } = result;
+  const emptyMessage = options.emptyMessage || "Not enough numeric columns for a correlation matrix.";
+  const ariaLabel = options.ariaLabel || "Correlation heatmap";
+  if (!columns.length || !matrix.length) {
+    container.innerHTML = `<p class="muted small">${escapeHtml(emptyMessage)}</p>`;
+    return;
+  }
+  const cell = 34;
+  let html = "";
+  if (result.truncated) {
+    html += `<p class="muted small">Showing the top ${columns.length} numeric columns by variance (dataset has more).</p>`;
+  }
+  html += `<div class="heatmap-scroll"><svg width="${cell * (columns.length + 1)}" height="${cell * (columns.length + 1)}" role="img" aria-label="${escapeHtml(ariaLabel)}">`;
+  columns.forEach((name, i) => {
+    html += `<text x="${cell * (i + 1) + cell / 2}" y="${cell * 0.9}" font-size="9" text-anchor="middle" transform="rotate(-45 ${cell * (i + 1) + cell / 2} ${cell * 0.9})">${escapeHtml(name)}</text>`;
+    html += `<text x="${cell * 0.95}" y="${cell * (i + 1) + cell / 2 + 3}" font-size="9" text-anchor="end">${escapeHtml(name)}</text>`;
+  });
+  matrix.forEach((row, i) => {
+    row.forEach((value, j) => {
+      const intensity = Math.min(Math.abs(value), 1);
+      const color = value >= 0 ? `rgba(124, 58, 237, ${intensity})` : `rgba(220, 38, 38, ${intensity})`;
+      html += `<rect x="${cell * (j + 1)}" y="${cell * (i + 1)}" width="${cell}" height="${cell}" fill="${color}"><title>${escapeHtml(columns[i])} × ${escapeHtml(columns[j])}: ${value.toFixed(2)}</title></rect>`;
+    });
+  });
+  html += "</svg></div>";
+  container.innerHTML = html;
+}
+
+async function loadCorrelationsTab() {
+  const panel = $("ptab-correlations-panel");
+  panel.innerHTML = `
+    <div class="chip-row">
+      <label class="field" style="max-width:200px">
+        <span class="visually-hidden">Correlation method</span>
+        <select id="correlation-method-select">
+          <option value="pearson">Pearson</option>
+          <option value="spearman">Spearman</option>
+          <option value="kendall">Kendall</option>
+          <option value="mutual_info">Mutual Information</option>
+        </select>
+      </label>
+    </div>
+    <div id="correlation-heatmap-box"><p class="muted small">Loading…</p></div>`;
+  panel.dataset.loaded = "1";
+
+  const fetchAndRender = async () => {
+    const method = $("correlation-method-select").value;
+    let result;
+    try {
+      const res = await authFetch(`/api/runs/${currentDatasetRunId}/correlations?method=${method}`);
+      if (!res.ok) throw new Error("failed to load correlations");
+      result = await res.json();
+    } catch {
+      $("correlation-heatmap-box").innerHTML = `<p class="muted small">Could not load correlations.</p>`;
+      return;
+    }
+    renderCorrelationHeatmap($("correlation-heatmap-box"), result);
+  };
+  $("correlation-method-select").addEventListener("change", fetchAndRender);
+  await fetchAndRender();
+}
+
+/* ================= missing values sub-tab ================= */
+
+async function loadMissingValuesTab() {
+  const panel = $("ptab-missing-panel");
+  panel.innerHTML = `<p class="muted small">Loading…</p>`;
+  panel.dataset.loaded = "1";
+
+  let result;
+  try {
+    const res = await authFetch(`/api/runs/${currentDatasetRunId}/missing-values`);
+    if (!res.ok) throw new Error("failed to load missing-value analysis");
+    result = await res.json();
+  } catch {
+    panel.innerHTML = `<p class="muted small">Could not load missing-value analysis.</p>`;
+    return;
+  }
+
+  const rows = result.per_column.filter((r) => r.null_count > 0).sort((a, b) => b.null_rate - a.null_rate);
+  let html = `<div class="quality-bars">${rows
+    .map(
+      (r) => `
+    <div class="quality-row">
+      <span class="quality-name">${escapeHtml(r.column)}</span>
+      <span class="fi-track"><span class="fi-fill quality-fill" style="width:${(r.null_rate * 100).toFixed(1)}%;background:var(--accent-warning)"></span></span>
+      <span class="quality-value mono">${(r.null_rate * 100).toFixed(1)}%</span>
+    </div>`
+    )
+    .join("")}</div>`;
+  if (!rows.length) html = `<p class="muted small">No missing values in this dataset.</p>`;
+
+  html += `<h4 class="missing-corr-title">Which columns tend to be missing together</h4><div id="missing-corr-box"></div>`;
+  panel.innerHTML = html;
+  renderCorrelationHeatmap($("missing-corr-box"), { columns: result.missing_correlation.columns, matrix: result.missing_correlation.matrix }, {
+    emptyMessage: "Fewer than two columns have missing values, so there's nothing to correlate.",
+    ariaLabel: "Missing-value correlation heatmap",
+  });
+}
+
+/* ================= outliers sub-tab ================= */
+
+async function loadOutliersTab() {
+  const panel = $("ptab-outliers-panel");
+  panel.innerHTML = `
+    <div class="chip-row">
+      <label class="field" style="max-width:200px">
+        <span class="visually-hidden">Outlier detection method</span>
+        <select id="outlier-method-select">
+          <option value="iqr">IQR</option>
+          <option value="zscore">Z-score</option>
+          <option value="isolation_forest">Isolation Forest</option>
+          <option value="lof">Local Outlier Factor</option>
+        </select>
+      </label>
+    </div>
+    <div id="outlier-result-box"><p class="muted small">Loading…</p></div>`;
+  panel.dataset.loaded = "1";
+
+  const fetchAndRender = async () => {
+    const method = $("outlier-method-select").value;
+    const box = $("outlier-result-box");
+    box.innerHTML = `<p class="muted small">Detecting…</p>`;
+    let result;
+    try {
+      const res = await authFetch(`/api/runs/${currentDatasetRunId}/outliers?method=${method}`);
+      if (!res.ok) throw new Error("failed to run outlier detection");
+      result = await res.json();
+    } catch {
+      box.innerHTML = `<p class="muted small">Could not run outlier detection.</p>`;
+      return;
+    }
+    box.innerHTML = `
+      <div class="chips">
+        <span class="chip flagged">${result.outlier_count} outlier row(s) detected</span>
+        ${(result.affected_columns || []).map((c) => `<span class="chip detected">${escapeHtml(c)}</span>`).join("")}
+      </div>
+      ${result.example_row_indices && result.example_row_indices.length ? `<p class="muted small">Example row indices: ${result.example_row_indices.join(", ")}</p>` : ""}`;
+  };
+  $("outlier-method-select").addEventListener("change", fetchAndRender);
+  await fetchAndRender();
+}
+
+/* ================= interactive preview table ================= */
+
+function classifyPreviewType(dtype) {
+  const d = String(dtype || "").toLowerCase();
+  if (d.includes("bool")) return "boolean";
+  if (d.includes("datetime") || d.includes("date")) return "datetime";
+  if (d.includes("int") || d.includes("float")) return "numeric";
+  return "categorical";
+}
+
+async function loadPreviewTable(run) {
+  previewColumns = run.profile_columns || [];
+  const layoutKey = `automl-preview-layout-${currentDatasetRunId}`;
+  const savedLayout = JSON.parse(localStorage.getItem(layoutKey) || "{}");
+  const hiddenColumns = new Set(savedLayout.hiddenColumns || []);
+
+  $("preview-colvis").innerHTML = previewColumns
+    .map(
+      (c) => `<label class="colvis-item"><input type="checkbox" data-col="${escapeHtml(c.name)}" ${hiddenColumns.has(c.name) ? "" : "checked"}/> ${escapeHtml(c.name)}</label>`
+    )
+    .join("");
+  $("preview-colvis").querySelectorAll("input[type=checkbox]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const hidden = new Set(
+        Array.from($("preview-colvis").querySelectorAll("input:not(:checked)")).map((el) => el.dataset.col)
+      );
+      localStorage.setItem(layoutKey, JSON.stringify({ hiddenColumns: [...hidden] }));
+      fetchAndRenderPreviewPage();
+    });
+  });
+
+  await fetchAndRenderPreviewPage();
+}
+
+async function fetchAndRenderPreviewPage() {
+  const params = new URLSearchParams({
+    page: String(previewState.page),
+    page_size: String(previewState.pageSize),
+    sort_dir: previewState.sortDir,
+  });
+  if (previewState.sortBy) params.set("sort_by", previewState.sortBy);
+  if (previewState.search) params.set("search", previewState.search);
+
+  let data;
+  try {
+    const res = await authFetch(`/api/runs/${currentDatasetRunId}/preview?${params}`);
+    if (!res.ok) throw new Error("failed to load preview");
+    data = await res.json();
+  } catch {
+    $("preview-table").innerHTML = `<tr><td>Could not load preview.</td></tr>`;
+    return;
+  }
+  renderPreviewTable(data);
+}
+
+function renderPreviewTable(data) {
+  const layoutKey = `automl-preview-layout-${currentDatasetRunId}`;
+  const savedLayout = JSON.parse(localStorage.getItem(layoutKey) || "{}");
+  const hiddenColumns = new Set(savedLayout.hiddenColumns || []);
+  const visibleColumns = previewColumns.filter((c) => !hiddenColumns.has(c.name));
+  const piiSet = new Set(data.pii_columns || []);
+  const duplicateSet = new Set(data.duplicate_row_indices || []);
+
+  const numericRanges = {};
+  for (const col of visibleColumns) {
+    if (classifyPreviewType(col.dtype) !== "numeric") continue;
+    const values = data.rows.map((r) => r[col.name]).filter((v) => v != null);
+    numericRanges[col.name] = values.length ? { min: Math.min(...values), max: Math.max(...values) } : null;
+  }
+
+  let html = "<tr>" + visibleColumns
+    .map(
+      (c) => `<th data-col="${escapeHtml(c.name)}" class="sortable">
+        ${escapeHtml(c.name)} <span class="col-type-badge">${classifyPreviewType(c.dtype)}</span>
+        ${piiSet.has(c.name) ? `<span class="chip flagged" title="PII column">PII</span>` : ""}
+        <button type="button" class="col-profile-btn" data-col="${escapeHtml(c.name)}" title="Profile this column">${ICONS.search}</button>
+      </th>`
+    )
+    .join("") + "</tr>";
+
+  for (const row of data.rows) {
+    const isDup = duplicateSet.has(row._row_index);
+    html += `<tr class="${isDup ? "preview-row-duplicate" : ""}">`;
+    for (const col of visibleColumns) {
+      const value = row[col.name];
+      const type = classifyPreviewType(col.dtype);
+      if (value == null) {
+        html += `<td class="preview-cell-missing">—</td>`;
+      } else if (type === "numeric") {
+        const range = numericRanges[col.name];
+        const pct = range && range.max > range.min ? (value - range.min) / (range.max - range.min) : 0;
+        html += `<td class="num preview-cell-numeric" style="background:linear-gradient(90deg, var(--accent-primary-soft) ${(pct * 100).toFixed(0)}%, transparent ${(pct * 100).toFixed(0)}%)">${escapeHtml(String(value))}</td>`;
+      } else if (type === "boolean") {
+        html += `<td><span class="chip ${value ? "detected" : "flagged"}">${escapeHtml(String(value))}</span></td>`;
+      } else if (type === "categorical") {
+        html += `<td><span class="chip detected">${escapeHtml(String(value))}</span></td>`;
+      } else {
+        html += `<td title="${escapeHtml(String(value))}">${escapeHtml(String(value))}</td>`;
+      }
+    }
+    html += "</tr>";
+  }
+  $("preview-table").innerHTML = html;
+
+  $("preview-table").querySelectorAll("th.sortable").forEach((th) => {
+    th.addEventListener("click", (e) => {
+      if (e.target.closest(".col-profile-btn")) return;
+      const col = th.dataset.col;
+      previewState.sortDir = previewState.sortBy === col && previewState.sortDir === "asc" ? "desc" : "asc";
+      previewState.sortBy = col;
+      fetchAndRenderPreviewPage();
+    });
+  });
+  $("preview-table").querySelectorAll(".col-profile-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openColumnExplorer(btn.dataset.col);
+    });
+  });
+
+  const totalPages = Math.max(1, Math.ceil(data.total_count / previewState.pageSize));
+  $("preview-pager").innerHTML = `
+    <button type="button" class="btn ghost" id="preview-prev" ${previewState.page <= 1 ? "disabled" : ""}>Prev</button>
+    <span class="muted small">Page ${data.page} of ${totalPages} · ${data.total_count.toLocaleString()} rows</span>
+    <button type="button" class="btn ghost" id="preview-next" ${previewState.page >= totalPages ? "disabled" : ""}>Next</button>`;
+  $("preview-prev").addEventListener("click", () => { previewState.page -= 1; fetchAndRenderPreviewPage(); });
+  $("preview-next").addEventListener("click", () => { previewState.page += 1; fetchAndRenderPreviewPage(); });
+}
+
+async function openColumnExplorer(columnName) {
+  $("column-explorer-name").textContent = columnName;
+  $("column-explorer").classList.remove("hidden");
+  $("column-explorer-body").innerHTML = `<p class="muted small">Loading…</p>`;
+
+  let detail;
+  try {
+    const res = await authFetch(`/api/runs/${currentDatasetRunId}/columns/${encodeURIComponent(columnName)}`);
+    if (!res.ok) throw new Error("failed to load column detail");
+    detail = await res.json();
+  } catch {
+    $("column-explorer-body").innerHTML = `<p class="muted small">Could not load column details.</p>`;
+    return;
+  }
+
+  let html = `<p class="muted small mono">${escapeHtml(detail.dtype)}</p>`;
+
+  if (detail.is_numeric) {
+    // A numeric column that is entirely NaN reports is_numeric: true but omits
+    // histogram/stats altogether (see src/profiling/preview.py) — guard rather
+    // than assume they're always present alongside is_numeric.
+    if (detail.histogram && detail.stats) {
+      const hist = detail.histogram;
+      const maxCount = Math.max(...hist.counts, 1);
+      html += `<div class="explorer-histogram">${hist.counts
+        .map((c) => `<span class="explorer-bar" style="height:${((c / maxCount) * 100).toFixed(0)}%" title="${c}"></span>`)
+        .join("")}</div>`;
+      const s = detail.stats;
+      html += `<div class="explorer-stats">
+        <div>Mean <strong>${s.mean.toFixed(2)}</strong></div>
+        <div>Median <strong>${s.median.toFixed(2)}</strong></div>
+        <div>Std Dev <strong>${s.std.toFixed(2)}</strong></div>
+        <div>Min <strong>${s.min.toFixed(2)}</strong></div>
+        <div>Max <strong>${s.max.toFixed(2)}</strong></div>
+        <div>P25 <strong>${s.p25.toFixed(2)}</strong></div>
+        <div>P75 <strong>${s.p75.toFixed(2)}</strong></div>
+        <div>Skew <strong>${s.skew.toFixed(2)}</strong></div>
+      </div>`;
+      if (detail.correlation_with_target != null) {
+        html += `<p class="muted small">Correlation with target: <strong>${detail.correlation_with_target.toFixed(3)}</strong></p>`;
+      }
+    } else {
+      html += `<p class="muted small">This column has no non-missing values, so no distribution can be shown.</p>`;
+    }
+  } else {
+    html += `<div class="field"><span>Top values</span><ul class="callout-list">${Object.entries(detail.top_values || {})
+      .map(([k, v]) => `<li>${escapeHtml(k)} <span class="muted small">(${v})</span></li>`)
+      .join("")}</ul></div>`;
+  }
+
+  const insights = detail.ml_insights || { analyzed: false };
+  if (insights.analyzed) {
+    html += `<div class="field"><span>ML Insights</span><ul class="callout-list">${(insights.recommended_steps || [])
+      .map((s) => `<li><span class="step-op">${escapeHtml(s.op)}</span><span class="step-rationale">${escapeHtml(s.rationale || "")}</span></li>`)
+      .join("")}${(insights.leakage_flags || [])
+      .map((f) => `<li>${ICONS.warning}<span>${escapeHtml(f.reason)}</span></li>`)
+      .join("")}</ul></div>`;
+  } else {
+    html += `<p class="muted small">Run further into the pipeline to see ML insights for this column.</p>`;
+  }
+
+  $("column-explorer-body").innerHTML = html;
+}
+
+$("column-explorer-close").addEventListener("click", () => $("column-explorer").classList.add("hidden"));
+
+let previewSearchDebounce = null;
+$("preview-search").addEventListener("input", (e) => {
+  clearTimeout(previewSearchDebounce);
+  previewSearchDebounce = setTimeout(() => {
+    previewState.search = e.target.value.trim();
+    previewState.page = 1;
+    fetchAndRenderPreviewPage();
+  }, 300);
+});
+
+$("dataset-breadcrumb-back").addEventListener("click", showDatasetsView);
 
 /* ================= recent runs (sidebar) ================= */
 
@@ -1433,6 +1949,18 @@ function formatDuration(totalSeconds) {
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   return `${minutes}m ${seconds % 60}s`;
+}
+
+function formatBytes(bytes) {
+  if (bytes == null) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
 function relativeTime(epochSeconds) {

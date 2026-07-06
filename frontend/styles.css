@@ -753,3 +753,71 @@ select, textarea, input[type="text"], input[type="number"] {
   background: var(--bg-surface-raised); border: 1px dashed var(--border-subtle);
   border-radius: var(--radius-sm);
 }
+
+/* ================= datasets list ================= */
+
+.datasets-list { display: grid; gap: 6px; }
+.dataset-row {
+  display: flex; justify-content: space-between; align-items: center; gap: var(--sp-2);
+  font: inherit; text-align: left; width: 100%; cursor: pointer;
+  background: var(--bg-surface-raised); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm); padding: 10px 12px; color: var(--text-primary);
+}
+.dataset-row:hover { border-color: var(--accent-primary); }
+.dataset-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dataset-row-name { font-weight: 650; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dataset-row-meta { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+
+/* ================= dataset detail ================= */
+
+.breadcrumb { display: flex; align-items: center; gap: 8px; font-size: var(--text-sm); margin-bottom: var(--sp-2); }
+.breadcrumb-link { font: inherit; background: none; border: none; color: var(--accent-primary); cursor: pointer; padding: 0; }
+.breadcrumb-sep { color: var(--text-secondary); }
+#dataset-breadcrumb-name { font-weight: 650; }
+
+.dataset-tab-bar { margin-bottom: 0; }
+.dataset-tab-bar .tab-btn.disabled { cursor: default; opacity: 0.45; }
+.dataset-tab-bar .tab-btn.disabled:hover { color: var(--text-secondary); }
+.dataset-tab-bar em { font-style: normal; font-size: 10px; margin-left: 4px; border: 1px solid currentColor; border-radius: 999px; padding: 1px 6px; opacity: 0.8; }
+
+.column-explorer {
+  position: fixed; top: 0; right: 0; height: 100vh; width: min(420px, 100vw);
+  background: var(--bg-surface); border-left: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow); padding: var(--sp-4); overflow-y: auto; z-index: 20;
+}
+.column-explorer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--sp-3); }
+
+/* ================= interactive preview table ================= */
+
+.preview-toolbar { display: flex; align-items: center; gap: var(--sp-2); }
+.preview-search { font-size: var(--text-sm); min-width: 200px; }
+.preview-colvis { position: relative; display: flex; flex-wrap: wrap; gap: 4px; max-width: 340px; }
+.colvis-item { font-size: var(--text-xs); display: flex; align-items: center; gap: 4px; }
+
+.preview-table-scroll { overflow: auto; max-height: 480px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.preview-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.preview-table th {
+  position: sticky; top: 0; background: var(--bg-surface-raised); text-align: left;
+  padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; cursor: pointer;
+}
+.preview-table th:first-child, .preview-table td:first-child { position: sticky; left: 0; background: var(--bg-surface); z-index: 1; }
+.preview-table td { padding: 6px 10px; border-bottom: 1px solid var(--border-subtle); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-table td.num { text-align: right; font-family: var(--font-mono); }
+.col-type-badge { font-size: 10px; color: var(--text-secondary); font-weight: 500; text-transform: uppercase; margin-left: 4px; }
+.col-profile-btn { background: none; border: none; cursor: pointer; color: var(--text-secondary); margin-left: 4px; vertical-align: middle; }
+.col-profile-btn:hover { color: var(--accent-primary); }
+.preview-cell-missing { color: var(--text-secondary); font-style: italic; }
+.preview-row-duplicate { border-left: 3px solid var(--accent-warning); }
+.preview-pager { display: flex; align-items: center; justify-content: center; gap: var(--sp-3); margin-top: var(--sp-3); }
+
+/* ================= column explorer ================= */
+
+.explorer-histogram { display: flex; align-items: flex-end; gap: 2px; height: 100px; margin: var(--sp-3) 0; }
+.explorer-bar { flex: 1; background: var(--accent-primary); border-radius: 2px 2px 0 0; min-height: 1px; }
+.explorer-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; font-size: var(--text-xs); color: var(--text-secondary); margin-bottom: var(--sp-3); }
+.explorer-stats strong { color: var(--text-primary); font-family: var(--font-mono); }
+
+/* ================= correlations / missing-values heatmaps ================= */
+
+.heatmap-scroll { overflow: auto; max-width: 100%; }
+.missing-corr-title { font-size: var(--text-sm); font-weight: 650; margin: var(--sp-3) 0 var(--sp-2); }
