@@ -412,6 +412,7 @@ def _run_summary(run_id: str, entry: dict[str, Any]) -> dict[str, Any]:
                 .get("pii_report", {})
                 .get("pii_columns_detected"),
                 "quality": state.get("profile", {}).get("quality"),
+                "memory_bytes": state.get("profile", {}).get("memory_bytes"),
             },
             "profile_columns": _profile_columns(state),
             "leakage_flags": state.get("leakage_flags", []),

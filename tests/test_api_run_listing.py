@@ -74,3 +74,12 @@ def test_profile_columns_include_top_values():
     cols = {c["name"]: c for c in server._profile_columns(state)}
     assert cols["churned"]["top_values"] == {"0": 90, "1": 10}
     assert cols["tenure"]["top_values"] is None
+
+
+def test_run_summary_includes_memory_bytes(monkeypatch):
+    client = TestClient(server.app)
+    state = {"profile": {"row_count": 10, "column_count": 2, "memory_bytes": 4096}}
+    monkeypatch.setitem(server._runs, "fake-run-3", _entry(state, "completed"))
+
+    run = client.get("/api/runs/fake-run-3").json()
+    assert run["profile_summary"]["memory_bytes"] == 4096
