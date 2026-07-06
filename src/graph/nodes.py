@@ -13,12 +13,13 @@ import pandas as pd
 import yaml
 from sklearn.preprocessing import OrdinalEncoder
 
+from src.data_io import load_dataset
 from src.profiling.eda import run_eda
 from src.profiling.leakage import detect_target_leakage
 from src.profiling.profile import profile_dataset
 from src.sandbox.execute import SandboxExecutionError, SandboxTimeoutError, SandboxValidationError, dry_run, run_on_full_dataset
 from src.state import PipelineState
-from src.training.dispatch import poll_training_job, train_model
+from src.training.dispatch import poll_training_job, select_features, train_model
 
 TRANSFORMED_DIR = Path("artifacts/transformed")
 
@@ -29,7 +30,12 @@ def _runtime_config() -> dict[str, Any]:
 
 
 def profile_node(state: PipelineState) -> PipelineState:
-    df = pd.read_csv(state["dataset_path"])
+    if state.get("profile"):
+        # experiment runs launched from an existing run reuse its profile —
+        # same file, same deterministic output, no point re-reading it
+        # (docs/superpowers/specs/2026-07-06-multi-experiment-design.md)
+        return state
+    df = load_dataset(state["dataset_path"])
     state["profile"] = profile_dataset(df)
     return state
 
@@ -67,7 +73,7 @@ def human_checkpoint_node(state: PipelineState) -> PipelineState:
 
 
 def leakage_check_node(state: PipelineState) -> PipelineState:
-    df = pd.read_csv(state["dataset_path"])
+    df = load_dataset(state["dataset_path"])
     target_column = state.get("task_spec", {}).get("target_column")
     state["leakage_flags"] = detect_target_leakage(df, target_column) if target_column else []
     return state
@@ -77,8 +83,8 @@ def eda_node(state: PipelineState) -> PipelineState:
     """Deterministic exploratory analysis (src/profiling/eda.py) — feeds the
     feature_engineering node's prompt and is shown to the user for approval
     before anything gets applied."""
-    df = pd.read_csv(state["dataset_path"])
-    result = run_eda(df, state.get("profile", {}), state.get("task_spec", {}))
+    df = load_dataset(state["dataset_path"])
+    result = run_eda(df, state.get("profile", {}), state.get("task_spec", {}), state.get("leakage_flags"))
     state["eda_report"] = {"insights": result["insights"], "suggested_steps": result["suggested_steps"]}
     state["resampling_suggestion"] = result["resampling_suggestion"]
     return state
@@ -141,7 +147,10 @@ def _apply_builtin_step(df: pd.DataFrame, op: str, columns: list[str], params: d
     elif op == "encode":
         method = params.get("method", "onehot")
         if method == "onehot":
-            df = pd.get_dummies(df, columns=columns, dummy_na=False)
+            # dtype="int8": pandas >= 2.0 defaults dummy columns to bool, which
+            # sklearn's SimpleImputer rejects outright — and the bool dtype
+            # survives the CSV round-trip into the training job.
+            df = pd.get_dummies(df, columns=columns, dummy_na=False, dtype="int8")
         elif method == "ordinal":
             encoder = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)
             df[columns] = encoder.fit_transform(df[columns].astype(str))
@@ -187,7 +196,7 @@ def apply_feature_plan_node(state: PipelineState) -> PipelineState:
     dataset only after the dry-run succeeds (CLAUDE.md rule #6). Statistical
     steps are deferred to the training job (see _is_training_time_step).
     Output schema is checked afterward (PRD FR-17) before advancing."""
-    df = pd.read_csv(state["dataset_path"])
+    df = load_dataset(state["dataset_path"])
     plan = state.get("feature_plan", {})
     retry_count = dict(state.get("retry_count", {}))
     deferred_steps: list[dict[str, Any]] = []
@@ -234,7 +243,24 @@ def dispatch_training_node(state: PipelineState) -> PipelineState:
     cv_enabled = state.get("cv_enabled", True)
     cv_folds = state.get("cv_folds", 5)
     tuning_enabled = state.get("tuning_enabled", True)
+    feature_selection_enabled = state.get("feature_selection_enabled", False)
     resampling_plan = state.get("resampling_plan") or {"enabled": False, "method": "none"}
+
+    # feature elimination runs ONCE here with a basic linear model; the chosen
+    # subset is shared by every candidate so all models train on the same
+    # feature space (2026-07-06-eda-drops-and-rfe-design.md, revision).
+    selection: dict[str, Any] = {}
+    if feature_selection_enabled:
+        selection = select_features(
+            state["transformed_dataset_path"],
+            task_spec["target_column"],
+            task_spec["task_type"],
+            task_spec.get("time_column"),
+            state.get("training_preprocess_steps", []),
+            task_spec.get("metric"),
+        )
+        state["feature_selection_result"] = selection
+
     run_ids = []
     for candidate in state.get("candidate_models", []):
         run_id = train_model.invoke(
@@ -252,6 +278,8 @@ def dispatch_training_node(state: PipelineState) -> PipelineState:
                 "cv_folds": cv_folds,
                 "tuning_enabled": tuning_enabled,
                 "tuning_metric": task_spec.get("metric"),
+                "selected_features": selection.get("selected_features") or None,
+                "feature_selection_note": selection.get("note"),
                 "resampling_enabled": resampling_plan.get("enabled", False),
                 "resampling_method": resampling_plan.get("method", "none"),
             }
@@ -283,19 +311,33 @@ def poll_training_node(state: PipelineState) -> PipelineState:
 
 
 def evaluate_node(state: PipelineState) -> PipelineState:
-    """Picks the best model per the task spec's metric (PRD FR-22)."""
+    """Picks the best model per the task spec's metric (PRD FR-22). If no
+    succeeded run actually reports that metric (the LLM may name one the
+    evaluator never computes, e.g. "precision", or roc_auc on a multiclass
+    target), fall back to the task type's default metric rather than
+    declaring the whole run a failure — the fallback is recorded in errors
+    so the report can surface it."""
     task_spec = state.get("task_spec", {})
-    metric = task_spec.get("metric") or ("f1" if task_spec.get("task_type") == "classification" else "rmse")
-    lower_is_better = metric in ("rmse", "mae")
+    default_metric = "f1" if task_spec.get("task_type") == "classification" else "rmse"
+    metric = task_spec.get("metric") or default_metric
 
-    succeeded = [r for r in state.get("training_results", []) if r["status"] == "succeeded" and metric in r.get("metrics", {})]
-    if not succeeded:
+    succeeded = [r for r in state.get("training_results", []) if r["status"] == "succeeded"]
+    with_metric = [r for r in succeeded if metric in r.get("metrics", {})]
+    if not with_metric and succeeded and metric != default_metric:
+        state.setdefault("errors", []).append(
+            f"evaluate: metric '{metric}' unavailable on trained candidates; fell back to '{default_metric}'"
+        )
+        metric = default_metric
+        with_metric = [r for r in succeeded if metric in r.get("metrics", {})]
+
+    if not with_metric:
         state["best_model"] = {}
         state.setdefault("errors", []).append("evaluate: no candidate produced a usable result for the target metric")
         return state
 
-    best = min(succeeded, key=lambda r: r["metrics"][metric]) if lower_is_better else max(
-        succeeded, key=lambda r: r["metrics"][metric]
+    lower_is_better = metric in ("rmse", "mae")
+    best = min(with_metric, key=lambda r: r["metrics"][metric]) if lower_is_better else max(
+        with_metric, key=lambda r: r["metrics"][metric]
     )
     state["best_model"] = best
     return state

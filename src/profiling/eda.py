@@ -59,7 +59,12 @@ def _looks_datetime(name: str, series: pd.Series) -> bool:
     return parsed.notna().mean() > 0.9
 
 
-def _suggest_feature_steps(df: pd.DataFrame, profile: dict[str, Any], task_spec: dict[str, Any]) -> list[dict[str, Any]]:
+def _suggest_feature_steps(
+    df: pd.DataFrame,
+    profile: dict[str, Any],
+    task_spec: dict[str, Any],
+    leakage_flags: Optional[list[dict[str, Any]]] = None,
+) -> list[dict[str, Any]]:
     target_column = task_spec.get("target_column")
     time_column = task_spec.get("time_column")
     pii_columns = set((profile.get("pii_report", {}) or {}).get("columns", {}) or {})
@@ -69,12 +74,37 @@ def _suggest_feature_steps(df: pd.DataFrame, profile: dict[str, Any], task_spec:
     numeric_cols_for_scaling: list[str] = []
     any_outlier_heavy = False
 
+    # high-severity leakage flags (near-perfect target correlation, categories
+    # mapping ~1:1 to the target) become concrete drop suggestions the user
+    # approves/rejects at the feature checkpoint — previously they were
+    # display-only, so leaky columns reached training unless dropped manually.
+    leakage_drop_cols: list[str] = []
+    for flag in leakage_flags or []:
+        col = flag.get("column")
+        if (
+            flag.get("severity") == "high"
+            and col in df.columns
+            and col not in (target_column, time_column)
+            and col not in leakage_drop_cols
+        ):
+            leakage_drop_cols.append(col)
+            suggestions.append(
+                _step(
+                    "drop", [col], {},
+                    f"'{col}' is a suspected target-leakage column ({flag.get('reason')}). A model trained on "
+                    "it will score deceptively well offline but won't generalize — dropping it is strongly "
+                    "recommended. (Heuristic flag, not a guarantee.)",
+                )
+            )
+
     for col in df.columns:
         # the designated time_column must survive untouched: training's
         # chronological split sorts by it (src/training/dispatch._split), so
         # decomposing or dropping it would silently disable that split.
         if col == target_column or col == time_column or col in pii_columns:
             continue
+        if col in leakage_drop_cols:
+            continue  # already suggested as a drop; don't also impute/encode it
         series = df[col]
         dtype = str(series.dtype)
         n_unique = int(series.nunique(dropna=True))
@@ -175,10 +205,36 @@ def _resampling_suggestion(profile: dict[str, Any], task_spec: dict[str, Any]) -
     return {"suggested": False, "method": "none", "reason": None, "minority_ratio": ratio}
 
 
-def run_eda(df: pd.DataFrame, profile: dict[str, Any], task_spec: dict[str, Any]) -> dict[str, Any]:
+_RFE_RECOMMEND_MIN_FEATURES = 15
+
+
+def run_eda(
+    df: pd.DataFrame,
+    profile: dict[str, Any],
+    task_spec: dict[str, Any],
+    leakage_flags: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
     """Returns {"insights": [...], "suggested_steps": [...], "resampling_suggestion": {...}}."""
+    insights = profile_insights(profile, task_spec)
+
+    target_column = task_spec.get("target_column")
+    n_features = sum(1 for c in df.columns if c != target_column)
+    if n_features >= _RFE_RECOMMEND_MIN_FEATURES:
+        insights.append(
+            {
+                "id": "rfe_recommended",
+                "category": "modeling",
+                "tone": "info",
+                "message": (
+                    f"This dataset has {n_features} candidate features — enabling feature selection (RFE) at "
+                    "the confirm step lets each model recursively eliminate weak features and often yields a "
+                    "simpler, better-generalizing model (at the cost of longer training)."
+                ),
+            }
+        )
+
     return {
-        "insights": profile_insights(profile, task_spec),
-        "suggested_steps": _suggest_feature_steps(df, profile, task_spec),
+        "insights": insights,
+        "suggested_steps": _suggest_feature_steps(df, profile, task_spec, leakage_flags),
         "resampling_suggestion": _resampling_suggestion(profile, task_spec),
     }

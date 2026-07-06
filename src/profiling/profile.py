@@ -157,5 +157,20 @@ def profile_dataset(df: pd.DataFrame) -> dict[str, Any]:
                         strong_pairs.append({"a": a, "b": b, "correlation": round(value, 3)})
             profile["strong_correlations"] = strong_pairs
 
+    # deterministic quality aggregates for the dashboard — shape-level
+    # statistics only, no raw values, so safe alongside the rest of the profile
+    null_rates = [float(df[col].isna().mean()) for col in df.columns]
+    completeness = 1.0 - (sum(null_rates) / len(null_rates) if null_rates else 0.0)
+    duplicate_row_count = int(df.duplicated().sum())
+    duplicate_row_rate = duplicate_row_count / len(df) if len(df) else 0.0
+    uniqueness = 1.0 - duplicate_row_rate
+    profile["quality"] = {
+        "completeness": round(completeness, 4),
+        "duplicate_row_count": duplicate_row_count,
+        "duplicate_row_rate": round(duplicate_row_rate, 4),
+        "uniqueness": round(uniqueness, 4),
+        "overall": round((completeness + uniqueness) / 2, 4),
+    }
+
     profile["sample_rows"] = redacted.head(MAX_SAMPLE_ROWS).to_dict(orient="records")
     return profile

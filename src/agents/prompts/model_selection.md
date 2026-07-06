@@ -22,6 +22,35 @@ Each candidate must specify:
   not exhaustive — training budget is capped)
 - rationale: why this candidate fits this specific dataset and task
 
+## Hyperparameter correctness (read carefully)
+
+Every key in `hyperparams` MUST be a real constructor argument of the named
+estimator class. Do not invent parameter names, and do not guess a name from
+a different library's convention (e.g. XGBoost's `learning_rate` is not a
+valid RandomForestClassifier parameter).
+
+Known deprecated values to avoid:
+- sklearn's tree ensembles (`RandomForestClassifier`, `RandomForestRegressor`,
+  `GradientBoostingClassifier`, `GradientBoostingRegressor`) removed
+  `max_features="auto"` in scikit-learn 1.3+. Use `"sqrt"`, `"log2"`, or
+  `None` instead — never `"auto"`.
+
+## Example of a well-formed candidate
+
+For a mid-size (around 20k rows), moderately imbalanced classification
+dataset with several high-cardinality categorical columns:
+
+```json
+{
+  "name": "Regularized Random Forest",
+  "library": "sklearn",
+  "estimator": "RandomForestClassifier",
+  "hyperparams": {"n_estimators": 300, "max_depth": 10, "max_features": "sqrt", "min_samples_leaf": 5, "random_state": 0},
+  "rationale": "Shallower trees and a higher min_samples_leaf than the default guard against overfitting to the high-cardinality categoricals; max_features=\"sqrt\" adds decorrelation across the larger-than-default ensemble."
+}
+```
+{{PRIOR_ATTEMPT_FEEDBACK}}
+
 ## Task specification
 {{TASK_SPEC_JSON}}
 

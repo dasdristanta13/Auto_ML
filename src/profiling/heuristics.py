@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 ID_NAME_HINTS = ("id", "uuid", "guid", "key", "index")
 IMBALANCE_THRESHOLD = 0.15
+TARGET_CARDINALITY_RATIO_THRESHOLD = 0.5
 
 
 def looks_like_identifier(name: str, dtype: str, n_unique: int, row_count: int) -> bool:
@@ -22,6 +23,23 @@ def looks_like_identifier(name: str, dtype: str, n_unique: int, row_count: int) 
     if any(hint in name.lower() for hint in ID_NAME_HINTS):
         return ratio > 0.5
     return ratio > 0.98
+
+
+def target_too_high_cardinality_for_classification(n_unique: int, row_count: int) -> bool:
+    """True when a classification target has so many distinct values that,
+    by pigeonhole, more than half the classes can only ever have a single
+    example — making a stratified split, cross-validation, or even a plain
+    holdout split structurally unable to generalize (and, for XGBoost
+    specifically, guaranteed to fail its contiguous-label-range validation
+    the moment a random split leaves a gap in the training labels).
+
+    Unlike looks_like_identifier(), this is not a feature-exclusion
+    heuristic — it checks fitness as a TARGET, so it does not exempt float
+    dtypes: a continuous value is exactly as invalid a classification label
+    as a high-cardinality string/int one."""
+    if row_count <= 0:
+        return False
+    return (n_unique / row_count) > TARGET_CARDINALITY_RATIO_THRESHOLD
 
 
 def minority_ratio(target_column_profile: Optional[dict[str, Any]]) -> Optional[float]:
