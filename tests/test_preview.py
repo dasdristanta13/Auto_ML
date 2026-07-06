@@ -9,7 +9,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.profiling.preview import MAX_PAGE_SIZE, column_detail, correlation_matrix, paginate_rows, missing_value_matrix
+from src.profiling.preview import MAX_PAGE_SIZE, MAX_OUTLIER_EXAMPLES, column_detail, correlation_matrix, paginate_rows, missing_value_matrix, detect_outliers
 
 
 def _df():
@@ -178,3 +178,47 @@ def test_missing_value_matrix_empty_correlation_when_fewer_than_two_null_columns
     df = pd.DataFrame({"a": [1, None, 3], "b": [1, 2, 3]})
     result = missing_value_matrix(df)
     assert result["missing_correlation"]["matrix"] == []
+
+
+def test_detect_outliers_iqr_flags_extreme_value():
+    df = pd.DataFrame({"amount": [10, 11, 12, 13, 14, 15, 1000]})
+    result = detect_outliers(df, method="iqr")
+    assert result["outlier_count"] == 1
+    assert "amount" in result["affected_columns"]
+    assert result["example_row_indices"] == [6]
+
+
+def test_detect_outliers_zscore_flags_extreme_value():
+    # A single extreme value among only 6 close values would inflate std
+    # enough to mask itself (classic z-score weakness on tiny samples) — use
+    # a large tight cluster so the outlier's z-score clears the threshold.
+    df = pd.DataFrame({"amount": [50] * 30 + [1000]})
+    result = detect_outliers(df, method="zscore")
+    assert result["outlier_count"] == 1
+    assert result["example_row_indices"] == [30]
+
+
+def test_detect_outliers_isolation_forest_runs_on_multivariate_data():
+    df = pd.DataFrame({"x": list(range(30)) + [500], "y": list(range(30)) + [500]})
+    result = detect_outliers(df, method="isolation_forest")
+    assert result["outlier_count"] >= 0
+    assert result["method"] == "isolation_forest"
+
+
+def test_detect_outliers_lof_runs_on_multivariate_data():
+    df = pd.DataFrame({"x": list(range(30)) + [500], "y": list(range(30)) + [500]})
+    result = detect_outliers(df, method="lof")
+    assert result["method"] == "lof"
+
+
+def test_detect_outliers_rejects_unknown_method():
+    df = pd.DataFrame({"x": [1, 2, 3]})
+    with pytest.raises(ValueError):
+        detect_outliers(df, method="bogus")
+
+
+def test_detect_outliers_caps_examples_at_configured_max():
+    values = [10] * 50 + [10_000] * 30
+    df = pd.DataFrame({"amount": values})
+    result = detect_outliers(df, method="iqr")
+    assert len(result["example_row_indices"]) <= MAX_OUTLIER_EXAMPLES

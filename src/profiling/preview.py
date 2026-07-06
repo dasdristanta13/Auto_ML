@@ -16,6 +16,8 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
+from src.profiling.heuristics import iqr_outlier_mask
+
 MAX_PAGE_SIZE = 200
 MAX_OUTLIER_EXAMPLES = 20
 CORRELATION_MAX_COLUMNS = 50
@@ -180,3 +182,54 @@ def missing_value_matrix(df: pd.DataFrame) -> dict[str, Any]:
         correlation = {"columns": columns_with_nulls, "matrix": []}
 
     return {"per_column": per_column, "missing_correlation": correlation}
+
+
+def detect_outliers(df: pd.DataFrame, method: str = "iqr") -> dict[str, Any]:
+    if method not in VALID_OUTLIER_METHODS:
+        raise ValueError(f"unknown outlier method '{method}'")
+
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    if not numeric_cols:
+        return {"method": method, "outlier_count": 0, "affected_columns": [], "example_row_indices": []}
+
+    if method in ("iqr", "zscore"):
+        outlier_mask = pd.Series(False, index=df.index)
+        affected_columns: list[str] = []
+        for col in numeric_cols:
+            series = df[col]
+            if method == "iqr":
+                col_mask = iqr_outlier_mask(series)
+            else:
+                non_null = series.dropna()
+                std = non_null.std()
+                if len(non_null) < 2 or std == 0:
+                    continue
+                col_mask = ((series - non_null.mean()) / std).abs() > 3
+            col_mask = col_mask.fillna(False)
+            if col_mask.any():
+                affected_columns.append(col)
+            outlier_mask |= col_mask
+    else:
+        subset = df[numeric_cols].apply(lambda c: c.fillna(c.mean()))
+        if len(subset) < 2:
+            return {"method": method, "outlier_count": 0, "affected_columns": [], "example_row_indices": []}
+        if method == "isolation_forest":
+            from sklearn.ensemble import IsolationForest
+
+            detector = IsolationForest(random_state=0, contamination="auto")
+        else:
+            from sklearn.neighbors import LocalOutlierFactor
+
+            detector = LocalOutlierFactor(novelty=False, n_neighbors=min(20, len(subset) - 1))
+
+        predictions = detector.fit_predict(subset)
+        outlier_mask = pd.Series(predictions == -1, index=df.index)
+        affected_columns = numeric_cols
+
+    outlier_indices = list(df.index[outlier_mask])
+    return {
+        "method": method,
+        "outlier_count": len(outlier_indices),
+        "affected_columns": affected_columns,
+        "example_row_indices": [int(i) for i in outlier_indices[:MAX_OUTLIER_EXAMPLES]],
+    }
