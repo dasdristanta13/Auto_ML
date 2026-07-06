@@ -227,6 +227,46 @@ async function openDatasetDetail(runId) {
     return;
   }
   $("dataset-breadcrumb-name").textContent = run.filename;
+
+  let summary = { feature_type_counts: {}, ml_readiness_score: 0 };
+  try {
+    summary = await (await authFetch(`/api/runs/${runId}/dataset-summary`)).json();
+  } catch { /* KPI row degrades gracefully to "—" placeholders */ }
+  renderDatasetKpis(run, summary);
+}
+
+function renderDatasetKpis(run, summary) {
+  const profile = run.profile_summary || {};
+  const counts = summary.feature_type_counts || {};
+  const cards = [
+    { icon: "db", tint: "violet", label: "Total Rows", value: profile.row_count != null ? Number(profile.row_count).toLocaleString() : "—" },
+    { icon: "grid", tint: "violet", label: "Total Columns", value: String(profile.column_count ?? "—") },
+    { icon: "warning", tint: "amber", label: "Missing Values", value: profile.quality ? `${(100 - profile.quality.completeness * 100).toFixed(1)}%` : "—" },
+    { icon: "layers", tint: "amber", label: "Duplicate Rows", value: profile.quality ? String(profile.quality.duplicate_row_count) : "—" },
+    { icon: "file", tint: "violet", label: "Memory Usage", value: formatBytes(profile.memory_bytes) },
+    { icon: "sliders", tint: "green", label: "Numeric Features", value: String(counts.numeric ?? "—") },
+    { icon: "grid", tint: "green", label: "Categorical Features", value: String(counts.categorical ?? "—") },
+    { icon: "clock", tint: "green", label: "Datetime Features", value: String(counts.datetime ?? "—") },
+    { icon: "file", tint: "green", label: "Text Features", value: String(counts.text ?? "—") },
+    { icon: "shield", tint: "violet", label: "Data Quality Score", value: profile.quality ? `${Math.round(profile.quality.overall * 100)}%` : "—" },
+    { icon: "shield", tint: "violet", label: "ML Readiness Score", value: `${Math.round((summary.ml_readiness_score ?? 0) * 100)}%` },
+  ];
+  const targetCol = (run.task_spec || {}).target_column;
+  if (targetCol) {
+    cards.push({ icon: "trophy", tint: "violet", label: "Target Column", value: targetCol });
+  }
+  $("dataset-kpi-row").innerHTML = cards
+    .map(
+      (c) => `
+      <div class="stat-card">
+        <span class="stat-icon ${c.tint}">${ICONS[c.icon]}</span>
+        <div class="stat-body">
+          <div class="stat-label">${c.label}</div>
+          <div class="stat-value">${escapeHtml(c.value)}</div>
+        </div>
+      </div>`
+    )
+    .join("");
 }
 
 $("dataset-breadcrumb-back").addEventListener("click", showDatasetsView);
@@ -1511,6 +1551,18 @@ function formatDuration(totalSeconds) {
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   return `${minutes}m ${seconds % 60}s`;
+}
+
+function formatBytes(bytes) {
+  if (bytes == null) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
 function relativeTime(epochSeconds) {
