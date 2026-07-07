@@ -1269,8 +1269,11 @@ function renderModelRationale(run) {
     let impact = "Marginal gain";
     if (durRatio != null && durRatio > 2) impact = "High Cost";
     else if (durRatio != null && durRatio > 1.3) impact = "Medium Cost";
+    // delta >= 0 always means "worse than champion", but whether that means
+    // a higher or lower raw metric value depends on lowerIsBetter (rmse/mae
+    // vs. accuracy/f1/etc.) — don't conflate the two.
     const reason = delta != null
-      ? `${delta >= 0 ? "Lower" : "Higher"} ${escapeHtml(metric)} (${Math.abs(delta).toFixed(3)} difference)${durRatio != null && durRatio > 1.3 ? " and slower training" : ""}`
+      ? `${(lowerIsBetter === (delta >= 0)) ? "Higher" : "Lower"} ${escapeHtml(metric)} (${Math.abs(delta).toFixed(3)} difference)${durRatio != null && durRatio > 1.3 ? " and slower training" : ""}`
       : "Did not outperform the champion";
     html += `<tr><td>${escapeHtml(r.candidate_name)}</td><td>${reason}</td><td><span class="chip flagged">${impact}</span></td></tr>`;
   }
