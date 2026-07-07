@@ -220,3 +220,10 @@ def test_generate_litellm_cost_reaches_trace_log(generate_cfg, monkeypatch):
     client.generate("run-3", "chat", "system prompt", "user prompt")
 
     assert logged["extra"]["cost_usd"] == 0.0037
+
+
+def test_shipped_models_yaml_defaults_to_native_backend(monkeypatch):
+    llm_client._models_config.cache_clear()
+    cfg = llm_client.node_model_config("chat")
+    assert cfg["backend"] == "native"
+    assert cfg["fallback_models"] == []
