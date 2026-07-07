@@ -63,6 +63,17 @@ def _active_profile(cfg: dict[str, Any]) -> Optional[dict[str, Any]]:
     return profiles[name]
 
 
+def _effective_backend(cfg: dict[str, Any]) -> str:
+    """Resolve native vs litellm execution backend: AUTOML_LLM_BACKEND env
+    var wins, then models.yaml's top-level `backend` key (default
+    "native"). Read per call, like the other env escape hatches, so
+    switching needs no yaml edit."""
+    backend = os.environ.get("AUTOML_LLM_BACKEND") or cfg.get("backend", "native")
+    if backend not in ("native", "litellm"):
+        raise ValueError(f"unknown LLM backend '{backend}' (expected 'native' or 'litellm')")
+    return backend
+
+
 def node_model_config(node: str) -> dict[str, Any]:
     """Effective provider/model/generation-params for a node.
 
@@ -94,6 +105,9 @@ def node_model_config(node: str) -> dict[str, Any]:
 
     if "provider" not in merged or "model" not in merged:
         raise ValueError(f"No provider/model configured for node '{node}' in config/models.yaml")
+
+    merged["backend"] = _effective_backend(cfg)
+    merged["fallback_models"] = list((profile or {}).get("fallback_models", []))
     return merged
 
 
