@@ -1156,7 +1156,6 @@ function renderJourneyCondensed(run) {
   const best = run.best_model || {};
 
   $("journey-condensed").innerHTML = JOURNEY_GROUPS.map((group, i) => {
-    const realNodes = group.nodes.map((n) => (n === "poll_training" ? "evaluate" : n));
     const isDone = group.nodes.every((n) => done.has(n === "poll_training" ? "evaluate" : n));
     const lastNode = group.nodes[group.nodes.length - 1];
     const duration = durations[lastNode === "poll_training" ? "evaluate" : lastNode];
