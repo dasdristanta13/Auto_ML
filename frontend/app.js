@@ -43,6 +43,15 @@ const STAGES = [
   { node: "report", label: "Report", icon: "file" },
 ];
 
+const JOURNEY_GROUPS = [
+  { label: "Data Received", nodes: ["profile"] },
+  { label: "Data Inspection", nodes: ["leakage_check", "eda"] },
+  { label: "Feature Engineering", nodes: ["feature_engineering", "apply_feature_plan"] },
+  { label: "Model Search", nodes: ["model_selection", "dispatch_training", "poll_training"] },
+  { label: "Evaluation", nodes: ["evaluate"] },
+  { label: "Champion Selected", nodes: ["report"] },
+];
+
 /* Plain-language copy for the reasoning rail — describes what each
    deterministic/LLM pipeline stage actually does and why, independent of
    any single run's data (DESIGN.md §4.1: distinguish "detected" facts from
@@ -1062,6 +1071,7 @@ function render(run) {
   );
 
   renderChampionBanner(run);
+  renderJourneyCondensed(run);
   renderStatCards(run);
   renderStageTracker(run);
   renderReasoningRail(run);
@@ -1136,6 +1146,32 @@ $("champion-download-btn").addEventListener("click", (e) => {
   e.preventDefault();
   $("export-report-btn").click();
 });
+
+/* ================= journey condensed ================= */
+
+function renderJourneyCondensed(run) {
+  const done = new Set(run.stages_done || []);
+  const durations = {};
+  for (const rec of run.stage_timeline || []) durations[rec.node] = rec.duration_seconds;
+  const best = run.best_model || {};
+
+  $("journey-condensed").innerHTML = JOURNEY_GROUPS.map((group, i) => {
+    const realNodes = group.nodes.map((n) => (n === "poll_training" ? "evaluate" : n));
+    const isDone = group.nodes.every((n) => done.has(n === "poll_training" ? "evaluate" : n));
+    const lastNode = group.nodes[group.nodes.length - 1];
+    const duration = durations[lastNode === "poll_training" ? "evaluate" : lastNode];
+    const sub = group.label === "Champion Selected" && best.candidate_name ? best.candidate_name : "";
+    return `
+      <li class="${isDone ? "done" : "pending"}">
+        <span class="journey-num">${isDone ? ICONS.check : i + 1}</span>
+        <span class="journey-label">${i + 1}. ${escapeHtml(group.label)}</span>
+        ${sub ? `<span class="muted small">${escapeHtml(sub)}</span>` : ""}
+        ${isDone && duration != null ? `<span class="journey-time">${formatDuration(duration)}</span>` : ""}
+      </li>`;
+  }).join("");
+}
+
+$("journey-view-pipeline-btn").addEventListener("click", () => switchRunTab("pipeline"));
 
 /* ================= stat cards ================= */
 

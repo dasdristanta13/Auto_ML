@@ -694,6 +694,22 @@ select, textarea, input[type="text"], input[type="number"] {
 .champion-banner-actions .btn.ghost { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.3); }
 .champion-banner-actions .btn.disabled { opacity: 0.5; pointer-events: none; }
 
+/* ================= journey condensed timeline ================= */
+
+.journey-condensed { list-style: none; padding: 0; display: grid; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.journey-condensed li { display: flex; align-items: center; gap: var(--sp-3); padding: 8px 0; }
+.journey-condensed li.pending { opacity: 0.5; }
+.journey-num {
+  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--text-xs); font-weight: 700;
+  background: var(--accent-success-soft); color: var(--accent-success);
+}
+.journey-condensed li.pending .journey-num { background: var(--bg-surface-raised); color: var(--text-secondary); }
+.journey-num .icon { width: 13px; height: 13px; }
+.journey-label { font-weight: 600; flex: 1; }
+.journey-time { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-secondary); }
+
 /* ================= reasoning rail ================= */
 
 .reasoning-rail { display: grid; gap: var(--sp-3); }
