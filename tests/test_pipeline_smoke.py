@@ -51,6 +51,8 @@ def _fake_generate(self, run_id, node, system_prompt, user_prompt, json_schema=N
         }
     if node == "report":
         return "This is a test report."
+    if node == "explainability":
+        return "This model is driven mainly by tenure and monthly spend."
     raise ValueError(f"unexpected node in fake_generate: {node}")
 
 

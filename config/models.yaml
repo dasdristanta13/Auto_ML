@@ -73,6 +73,10 @@ nodes:
     temperature: 0.2
     max_tokens: 4096
 
+  explainability:
+    temperature: 0.2
+    max_tokens: 512
+
   chat:
     temperature: 0.2
     max_tokens: 1024

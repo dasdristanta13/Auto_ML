@@ -198,6 +198,12 @@ def _mock_response(node: str, system_prompt: str) -> Any:
             "Unset AUTOML_MOCK_LLM and configure a provider in config/models.yaml "
             "to get a real plain-language rationale here."
         )
+    if node == "explainability":
+        return (
+            "MOCK-MODE EXPLANATION (AUTOML_MOCK_LLM=1 — no real LLM was called). "
+            "In a real run, this would name the top SHAP-ranked features driving "
+            "the winning model's predictions."
+        )
     if node == "chat":
         return (
             "MOCK-MODE ANSWER (AUTOML_MOCK_LLM=1 — no real LLM was called). "
