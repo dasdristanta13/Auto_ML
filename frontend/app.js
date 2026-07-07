@@ -158,6 +158,7 @@ let currentRunStatus = null;
 let selectedFile = null;
 let lastRun = null;
 let predictFormLoadedFor = null;
+let explainabilityLoadedFor = null;
 let currentDatasetRunId = null;
 let previewState = { page: 1, pageSize: 50, sortBy: null, sortDir: "asc", search: "" };
 let previewColumns = [];
@@ -2236,6 +2237,55 @@ function renderFeatureImportance(run) {
     .join("");
 }
 
+async function loadExplainabilityTab(run) {
+  if (!(run.best_model || {}).model_path) {
+    $("explainability-narrative").textContent = "";
+    $("explainability-list").innerHTML = "";
+    $("explainability-empty").textContent = "No trained model is available for this run yet.";
+    $("explainability-empty").classList.remove("hidden");
+    return;
+  }
+  if (explainabilityLoadedFor === run.run_id) return;
+  explainabilityLoadedFor = run.run_id;
+
+  try {
+    const data = await (await authFetch(`/api/runs/${run.run_id}/explainability`)).json();
+    renderExplainability(data);
+  } catch {
+    $("explainability-empty").textContent = "Could not load explainability data for this run.";
+    $("explainability-empty").classList.remove("hidden");
+    explainabilityLoadedFor = null;
+  }
+}
+
+function renderExplainability(data) {
+  const empty = $("explainability-empty");
+  const list = $("explainability-list");
+  const narrative = $("explainability-narrative");
+
+  if (data.method === "unavailable" || !data.feature_impact || !data.feature_impact.length) {
+    list.innerHTML = "";
+    narrative.textContent = "";
+    empty.textContent = data.note || "SHAP-based impact analysis isn't available for this run.";
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+  narrative.textContent = data.narrative || "";
+
+  const max = Math.max(...data.feature_impact.map((f) => f.mean_abs_shap), 0.0001);
+  list.innerHTML = data.feature_impact
+    .map(
+      (f) => `
+      <div class="fi-row">
+        <span class="fi-name" title="${escapeHtml(f.feature)}">${escapeHtml(f.feature)}</span>
+        <span class="fi-track"><span class="fi-fill" style="width:${((f.mean_abs_shap / max) * 100).toFixed(1)}%"></span></span>
+        <span class="fi-value">${f.mean_abs_shap.toFixed(3)}</span>
+      </div>`
+    )
+    .join("");
+}
+
 /* ================= activity feed ================= */
 
 function renderActivity(run) {
@@ -2314,6 +2364,7 @@ function switchRunTab(name) {
   }
   $("run-rail").classList.toggle("hidden", name !== "overview");
   $("run-layout").classList.toggle("no-rail", name !== "overview");
+  if (name === "explainability" && lastRun) loadExplainabilityTab(lastRun);
 }
 for (const tab of RUN_TABS) {
   $(`tab-${tab}-btn`).addEventListener("click", () => switchRunTab(tab));
@@ -2397,6 +2448,20 @@ function renderPredictResult(data) {
           <span>${escapeHtml(label)}</span>
           <span class="fi-track"><span class="fi-fill" style="width:${((p / max) * 100).toFixed(1)}%"></span></span>
           <span class="mono">${(p * 100).toFixed(1)}%</span>
+        </div>`
+      )
+      .join("");
+  }
+  if (data.contributions && data.contributions.length) {
+    const maxAbs = Math.max(...data.contributions.map((c) => Math.abs(c.shap_value)), 0.0001);
+    html += `<p class="muted small" style="margin-top:10px">Why:</p>`;
+    html += data.contributions
+      .map(
+        (c) => `
+        <div class="predict-proba-row">
+          <span>${escapeHtml(c.feature)}</span>
+          <span class="fi-track"><span class="fi-fill" style="width:${((Math.abs(c.shap_value) / maxAbs) * 100).toFixed(1)}%"></span></span>
+          <span class="mono">${c.shap_value >= 0 ? "+" : ""}${c.shap_value.toFixed(3)}</span>
         </div>`
       )
       .join("");
