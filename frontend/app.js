@@ -1072,6 +1072,7 @@ function render(run) {
 
   renderChampionBanner(run);
   renderJourneyCondensed(run);
+  renderLeaderboardCondensed(run);
   renderStatCards(run);
   renderStageTracker(run);
   renderReasoningRail(run);
@@ -1171,6 +1172,61 @@ function renderJourneyCondensed(run) {
 }
 
 $("journey-view-pipeline-btn").addEventListener("click", () => switchRunTab("pipeline"));
+
+/* ================= leaderboard condensed ================= */
+
+// Keyed by keyword found in the LLM-assigned candidate_name (case-insensitive),
+// checked in order — first match wins. Falls back to 3 stars when nothing
+// matches. This is a fuzzy, best-effort heuristic (candidate_name is free text,
+// not an enum), not a per-run measurement.
+const EXPLAINABILITY_KEYWORD_STARS = [
+  { keywords: ["logistic", "linear", "ridge", "lasso", "elastic net", "elasticnet"], stars: 5 },
+  { keywords: ["decision tree", "k-nearest", "knn", "naive bayes"], stars: 4 },
+  { keywords: ["random forest", "extra trees", "extratrees"], stars: 3 },
+  { keywords: ["gradient boost", "xgboost", "xgb", "lightgbm", "lgbm", "catboost"], stars: 2 },
+];
+
+function explainabilityStars(candidateName) {
+  const name = (candidateName || "").toLowerCase();
+  const match = EXPLAINABILITY_KEYWORD_STARS.find((entry) => entry.keywords.some((k) => name.includes(k)));
+  const n = match ? match.stars : 3;
+  return "★".repeat(n) + "☆".repeat(5 - n);
+}
+
+function renderLeaderboardCondensed(run) {
+  const results = run.training_results || [];
+  if (!results.length) { $("leaderboard-condensed-table").innerHTML = ""; $("leaderboard-view-all-btn").classList.add("hidden"); return; }
+
+  const metric = (run.task_spec || {}).metric;
+  const bestId = (run.best_model || {}).run_id;
+  const metricNames = [...new Set(results.flatMap((r) => Object.keys(r.metrics || {})))];
+  const primary = metric && metricNames.includes(metric) ? metric : metricNames[0];
+  const secondary = metricNames.find((m) => m !== primary);
+
+  const showAll = results.length <= 6;
+  const champion = results.find((r) => r.run_id === bestId);
+  const others = results.filter((r) => r.run_id !== bestId);
+  const shown = showAll ? results : [champion, ...others.slice(0, 5)].filter(Boolean);
+
+  $("leaderboard-condensed-sub").textContent = primary ? `ranked by ${primary}` : "";
+  $("leaderboard-view-all-btn").classList.toggle("hidden", showAll);
+
+  let html = `<tr><th>Model</th>${primary ? `<th>${escapeHtml(primary)}</th>` : ""}${secondary ? `<th>${escapeHtml(secondary)}</th>` : ""}<th>Training Time</th><th>Explainability</th><th>Champion</th></tr>`;
+  for (const r of shown) {
+    const isBest = r.run_id === bestId;
+    html += `<tr class="${isBest ? "best" : ""}">
+      <td>${escapeHtml(r.candidate_name)}</td>
+      ${primary ? `<td class="num">${r.metrics && primary in r.metrics ? Number(r.metrics[primary]).toFixed(3) : "—"}</td>` : ""}
+      ${secondary ? `<td class="num">${r.metrics && secondary in r.metrics ? Number(r.metrics[secondary]).toFixed(3) : "—"}</td>` : ""}
+      <td>${r.duration_seconds != null ? formatDuration(r.duration_seconds) : "—"}</td>
+      <td class="stars" title="Approximate rating based on the model's name, not a per-run measurement">${explainabilityStars(r.candidate_name)}</td>
+      <td>${isBest ? `<span class="winner-tag">★ CHAMPION</span>` : ""}</td>
+    </tr>`;
+  }
+  $("leaderboard-condensed-table").innerHTML = html;
+}
+
+$("leaderboard-view-all-btn").addEventListener("click", () => switchRunTab("models"));
 
 /* ================= stat cards ================= */
 
