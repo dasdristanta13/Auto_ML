@@ -78,25 +78,27 @@ class _FakeMessage:
 
 
 class _FakeChoice:
-    def __init__(self, content):
+    def __init__(self, content, finish_reason="stop"):
         self.message = _FakeMessage(content)
+        self.finish_reason = finish_reason
 
 
 class _FakeCompletionResponse:
-    def __init__(self, content):
-        self.choices = [_FakeChoice(content)]
+    def __init__(self, content, finish_reason="stop"):
+        self.choices = [_FakeChoice(content, finish_reason)]
 
 
 class _FakeLiteLLM:
-    def __init__(self, content="hello from litellm", cost=0.0012, cost_error=False):
+    def __init__(self, content="hello from litellm", cost=0.0012, cost_error=False, finish_reason="stop"):
         self.content = content
         self.cost = cost
         self.cost_error = cost_error
+        self.finish_reason = finish_reason
         self.last_completion_kwargs = None
 
     def completion(self, **kwargs):
         self.last_completion_kwargs = kwargs
-        return _FakeCompletionResponse(self.content)
+        return _FakeCompletionResponse(self.content, self.finish_reason)
 
     def completion_cost(self, completion_response):
         if self.cost_error:
@@ -154,6 +156,20 @@ def test_call_litellm_cost_none_when_completion_cost_fails(monkeypatch):
     )
     assert content == "hello from litellm"
     assert cost is None
+
+
+def test_call_litellm_raises_on_empty_content(monkeypatch):
+    """A reasoning model (e.g. the shipped default gpt-5-nano) can exhaust its
+    token budget on hidden reasoning and return empty content — this must
+    surface as a descriptive error, not an AttributeError from downstream
+    JSON parsing, matching _call_openai's equivalent guard."""
+    fake = _FakeLiteLLM(content=None, finish_reason="length")
+    monkeypatch.setitem(__import__("sys").modules, "litellm", fake)
+    with pytest.raises(RuntimeError, match="empty content"):
+        llm_client._call_litellm(
+            "sys", "user", "openai", "gpt-5-nano",
+            0.0, 2048, json_mode=False, fallback_models=[],
+        )
 
 
 @pytest.fixture()

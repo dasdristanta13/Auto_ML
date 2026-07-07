@@ -325,6 +325,15 @@ def _call_litellm(
 
     resp = litellm.completion(**kwargs)
     content = resp.choices[0].message.content
+    if not content:
+        finish_reason = resp.choices[0].finish_reason
+        raise RuntimeError(
+            f"litellm returned empty content for model '{kwargs['model']}' "
+            f"(finish_reason={finish_reason}). This usually means a reasoning "
+            "model's token budget was exhausted before any visible output was "
+            "written — increase max_tokens for this node in config/models.yaml "
+            "or use a non-reasoning model."
+        )
 
     try:
         cost = litellm.completion_cost(completion_response=resp)
