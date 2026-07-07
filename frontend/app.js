@@ -1074,6 +1074,7 @@ function render(run) {
   renderJourneyCondensed(run);
   renderLeaderboardCondensed(run);
   renderModelRationale(run);
+  renderPipelineActions(run);
   renderStatCards(run);
   renderStageTracker(run);
   renderReasoningRail(run);
@@ -1278,6 +1279,40 @@ function renderModelRationale(run) {
     html += `<tr><td>${escapeHtml(r.candidate_name)}</td><td>${reason}</td><td><span class="chip flagged">${impact}</span></td></tr>`;
   }
   $("why-others-table").innerHTML = html;
+}
+
+const FEATURE_OP_LABELS = {
+  impute: "Imputed missing values",
+  encode: "Encoded categorical values",
+  scale: "Standardized numerical features",
+  bin: "Binned continuous values",
+  datetime_decompose: "Decomposed datetime columns",
+  drop: "Removed columns",
+  custom_code: "Applied a custom transformation",
+};
+
+function renderPipelineActions(run) {
+  const steps = ((run.feature_plan || {}).steps) || [];
+  const card = $("pipeline-actions-card");
+  const items = [];
+
+  for (const step of steps) {
+    const label = FEATURE_OP_LABELS[step.op] || step.op;
+    const cols = (step.columns || []).slice(0, 3).join(", ") + (step.columns && step.columns.length > 3 ? ", …" : "");
+    items.push(`<li>${ICONS.check}<span><strong>${escapeHtml(label)}</strong>${cols ? ` — ${escapeHtml(cols)}` : ""}</span></li>`);
+  }
+  const resamplingApplied = (run.training_results || []).find((r) => r.resampling_applied)?.resampling_applied;
+  if (resamplingApplied) {
+    items.push(`<li>${ICONS.check}<span><strong>Applied ${escapeHtml(resamplingApplied.replaceAll("_", " "))}</strong> to correct class imbalance</span></li>`);
+  }
+  const fs = run.feature_selection;
+  if (fs && fs.n_features_selected != null) {
+    items.push(`<li>${ICONS.check}<span><strong>Feature selection</strong> kept ${fs.n_features_selected} of ${fs.n_features_total} features</span></li>`);
+  }
+
+  if (!items.length) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+  $("pipeline-actions-list").innerHTML = items.join("");
 }
 
 /* ================= stat cards ================= */
