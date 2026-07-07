@@ -1175,6 +1175,10 @@ function renderJourneyCondensed(run) {
 
 $("journey-view-pipeline-btn").addEventListener("click", () => switchRunTab("pipeline"));
 
+$("nextstep-compare-btn").addEventListener("click", () => switchRunTab("models"));
+$("nextstep-artifacts-btn").addEventListener("click", () => switchRunTab("artifacts"));
+$("nextstep-share-btn").addEventListener("click", () => $("share-btn").click());
+
 /* ================= leaderboard condensed ================= */
 
 // Keyed by keyword found in the LLM-assigned candidate_name (case-insensitive),
@@ -2260,7 +2264,9 @@ function renderInsights(run) {
 
 function renderReport(run) {
   $("test-model-btn").classList.toggle("hidden", !run.report);
-  if (!run.report) return;
+  const card = $("ai-summary-card");
+  if (!run.report) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
 
   const lines = run.report.split("\n").filter((l) => l.trim());
   const lede = lines[0] || "";

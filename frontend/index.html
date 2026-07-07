@@ -526,8 +526,11 @@
       </div><!-- /run-main -->
 
       <aside class="run-rail" id="run-rail">
-        <div id="report-lede" class="report-lede hidden"></div>
-        <div id="report-body" class="report-body"></div>
+        <div class="card hidden ai-summary-card" id="ai-summary-card">
+          <div class="card-head"><h3><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9Z"/></svg> AI Summary</h3></div>
+          <div id="report-lede" class="report-lede hidden"></div>
+          <div id="report-body" class="report-body"></div>
+        </div>
 
         <div class="card reasoning-rail hidden" id="reasoning-rail">
           <div class="reasoning-head">
@@ -552,6 +555,20 @@
           <div class="reasoning-section">
             <div class="card-head"><h4>Pipeline logs (simplified)</h4></div>
             <ul class="reasoning-log" id="reasoning-log"></ul>
+          </div>
+        </div>
+
+        <div class="card" id="next-steps-card">
+          <div class="card-head"><h3>Next Steps</h3></div>
+          <div class="next-steps-grid">
+            <button type="button" class="next-step-btn" id="nextstep-compare-btn">Compare Models</button>
+            <button type="button" class="next-step-btn" id="nextstep-artifacts-btn">Download Artifacts</button>
+            <button type="button" class="next-step-btn" id="nextstep-share-btn">Share Report</button>
+            <span class="next-step-btn disabled" title="Not available in this local build">View SHAP Report</span>
+            <span class="next-step-btn disabled" title="Not available in this local build">Deploy Model</span>
+            <span class="next-step-btn disabled" title="Not available in this local build">Generate API</span>
+            <span class="next-step-btn disabled" title="Not available in this local build">Schedule Retraining</span>
+            <span class="next-step-btn disabled" title="Not available in this local build">Monitor Model</span>
           </div>
         </div>
 
