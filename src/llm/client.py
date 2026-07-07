@@ -63,6 +63,17 @@ def _active_profile(cfg: dict[str, Any]) -> Optional[dict[str, Any]]:
     return profiles[name]
 
 
+def _effective_backend(cfg: dict[str, Any]) -> str:
+    """Resolve native vs litellm execution backend: AUTOML_LLM_BACKEND env
+    var wins, then models.yaml's top-level `backend` key (default
+    "native"). Read per call, like the other env escape hatches, so
+    switching needs no yaml edit."""
+    backend = os.environ.get("AUTOML_LLM_BACKEND") or cfg.get("backend", "native")
+    if backend not in ("native", "litellm"):
+        raise ValueError(f"unknown LLM backend '{backend}' (expected 'native' or 'litellm')")
+    return backend
+
+
 def node_model_config(node: str) -> dict[str, Any]:
     """Effective provider/model/generation-params for a node.
 
@@ -94,6 +105,9 @@ def node_model_config(node: str) -> dict[str, Any]:
 
     if "provider" not in merged or "model" not in merged:
         raise ValueError(f"No provider/model configured for node '{node}' in config/models.yaml")
+
+    merged["backend"] = _effective_backend(cfg)
+    merged["fallback_models"] = list((profile or {}).get("fallback_models", []))
     return merged
 
 
@@ -276,6 +290,59 @@ def _call_gemini(system: str, user: str, model: str, temperature: float, max_tok
     return resp.text
 
 
+def _call_litellm(
+    system: str,
+    user: str,
+    provider: str,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    json_mode: bool,
+    fallback_models: list[str],
+) -> tuple[str, Optional[float]]:
+    """Route a call through litellm instead of a hand-rolled per-provider
+    adapter. The model string is built as `<provider>/<model>` — litellm
+    dispatches on this prefix, which is what lets any of its 100+ supported
+    providers (Bedrock, Azure, Ollama, Mistral, Cohere, ...) work here with
+    no new adapter code, as long as models.yaml points at them. Provider
+    quirks (e.g. OpenAI reasoning-model token params) are left to litellm's
+    own normalization rather than re-implemented here."""
+    import litellm
+
+    kwargs: dict[str, Any] = {
+        "model": f"{provider}/{model}",
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if json_mode and provider in ("openai", "azure", "gemini"):
+        kwargs["response_format"] = {"type": "json_object"}
+    if fallback_models:
+        kwargs["fallbacks"] = list(fallback_models)
+
+    resp = litellm.completion(**kwargs)
+    content = resp.choices[0].message.content
+    if not content:
+        finish_reason = resp.choices[0].finish_reason
+        raise RuntimeError(
+            f"litellm returned empty content for model '{kwargs['model']}' "
+            f"(finish_reason={finish_reason}). This usually means a reasoning "
+            "model's token budget was exhausted before any visible output was "
+            "written — increase max_tokens for this node in config/models.yaml "
+            "or use a non-reasoning model."
+        )
+
+    try:
+        cost = litellm.completion_cost(completion_response=resp)
+    except Exception:  # noqa: BLE001 - cost is best-effort, never fatal
+        cost = None
+
+    return content, cost
+
+
 class LLMClient:
     """Call-count/token budget is tracked per run_id per CLAUDE.md's cost-control NFR."""
 
@@ -325,12 +392,21 @@ class LLMClient:
                 + json.dumps(json_schema)
             )
 
+        backend = cfg["backend"]
+        fallback_models = cfg["fallback_models"]
+
         last_error: Optional[str] = None
         attempt_user_prompt = user_prompt
         for attempt in range(retries + 1):
             self._calls_per_run[run_id] = self._calls_per_run.get(run_id, 0) + 1
+            cost: Optional[float] = None
             try:
-                if provider == "anthropic":
+                if backend == "litellm":
+                    raw, cost = _call_litellm(
+                        effective_system, attempt_user_prompt, provider, model, temperature, max_tokens,
+                        json_mode=json_schema is not None, fallback_models=fallback_models,
+                    )
+                elif provider == "anthropic":
                     raw = _call_anthropic(effective_system, attempt_user_prompt, model, temperature, max_tokens)
                 elif provider == "openai":
                     raw = _call_openai(
@@ -345,20 +421,30 @@ class LLMClient:
                 else:
                     raise ValueError(f"Unknown provider '{provider}' for node '{node}'")
             except Exception as exc:  # noqa: BLE001 - surfaced to caller after logging
-                log_llm_call(run_id, node, provider, model, effective_system, attempt_user_prompt, "", error=str(exc))
+                log_llm_call(
+                    run_id, node, provider, model, effective_system, attempt_user_prompt, "",
+                    error=str(exc), cost_usd=cost,
+                )
                 last_error = str(exc)
                 continue
 
             if json_schema is None:
-                log_llm_call(run_id, node, provider, model, effective_system, attempt_user_prompt, raw)
+                log_llm_call(
+                    run_id, node, provider, model, effective_system, attempt_user_prompt, raw, cost_usd=cost,
+                )
                 return raw
 
             try:
                 parsed = _extract_json(raw)
-                log_llm_call(run_id, node, provider, model, effective_system, attempt_user_prompt, raw)
+                log_llm_call(
+                    run_id, node, provider, model, effective_system, attempt_user_prompt, raw, cost_usd=cost,
+                )
                 return parsed
             except json.JSONDecodeError as exc:
-                log_llm_call(run_id, node, provider, model, effective_system, attempt_user_prompt, raw, error=str(exc))
+                log_llm_call(
+                    run_id, node, provider, model, effective_system, attempt_user_prompt, raw,
+                    error=str(exc), cost_usd=cost,
+                )
                 last_error = f"invalid JSON: {exc}"
                 attempt_user_prompt = (
                     user_prompt

@@ -20,6 +20,7 @@ python-multipart>=0.0.9
 anthropic>=0.34.0
 openai>=1.40.0
 google-generativeai>=0.7.0
+litellm>=1.50.0   # only needed when config/models.yaml sets backend: litellm
 
 # reporting / explainability
 shap>=0.45.0

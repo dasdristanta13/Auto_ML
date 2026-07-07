@@ -58,14 +58,29 @@
 
   <!-- ============ main column ============ -->
   <div class="main">
+    <div class="breadcrumb hidden" id="run-breadcrumb">
+      <button type="button" class="breadcrumb-link" id="run-breadcrumb-datasets">Datasets</button>
+      <span class="breadcrumb-sep">/</span>
+      <span id="run-breadcrumb-name"></span>
+    </div>
+
     <header class="page-header">
       <div class="page-header-text">
         <span class="eyebrow" id="header-eyebrow">Agentic AutoML</span>
         <h1 id="run-title">Start an experiment</h1>
         <p class="muted" id="run-desc">Upload data, describe your goal, and get a model that explains itself.</p>
+        <div class="header-tags hidden" id="header-tags"></div>
       </div>
       <div class="header-actions">
         <span id="status-badge" class="status-badge hidden"><span class="dot"></span><span id="status-badge-text">—</span></span>
+        <button class="btn ghost hidden" id="share-btn" type="button" title="Copy a link to this run">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 10.5 6.8-3.9M8.6 13.5l6.8 3.9"/></svg>
+          Share
+        </button>
+        <button class="btn ghost hidden" id="export-report-btn" type="button" title="Download the report as a Markdown file">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          Export Report
+        </button>
         <button class="btn danger hidden" id="cancel-btn" type="button">Cancel run</button>
         <button class="btn hidden" id="rerun-btn" type="button" title="Start a new experiment on this run's dataset — no re-upload needed">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
@@ -171,8 +186,68 @@
       <!-- stat cards -->
       <section class="stat-row" id="stat-cards"></section>
 
-      <div class="run-layout">
+      <div class="tab-bar run-tab-bar" role="tablist">
+        <button class="tab-btn active" id="tab-overview-btn" type="button" role="tab" aria-selected="true">Overview</button>
+        <button class="tab-btn" id="tab-data-btn" type="button" role="tab" aria-selected="false">Data</button>
+        <button class="tab-btn" id="tab-pipeline-btn" type="button" role="tab" aria-selected="false">Pipeline</button>
+        <button class="tab-btn" id="tab-models-btn" type="button" role="tab" aria-selected="false">Models Compared</button>
+        <button class="tab-btn" id="tab-explainability-btn" type="button" role="tab" aria-selected="false">Explainability</button>
+        <button class="tab-btn" id="tab-artifacts-btn" type="button" role="tab" aria-selected="false">Artifacts</button>
+        <button class="tab-btn" id="tab-logs-btn" type="button" role="tab" aria-selected="false">Logs</button>
+      </div>
+
+      <div class="run-layout" id="run-layout">
       <div class="run-main">
+
+      <div id="tab-overview-panel">
+
+        <section class="card champion-banner hidden" id="champion-banner">
+          <span class="champion-trophy"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 21h8m-4-4v4M7 4h10v6a5 5 0 0 1-10 0V4Z"/><path d="M7 6H4a2 2 0 0 0 2 5m11-5h3a2 2 0 0 1-2 5"/></svg></span>
+          <div class="champion-banner-body">
+            <div class="champion-banner-label">Champion Model Selected</div>
+            <h2 id="champion-banner-name"></h2>
+            <div class="champion-banner-stats" id="champion-banner-stats"></div>
+          </div>
+          <div class="champion-banner-actions">
+            <button type="button" class="btn ghost" id="champion-compare-btn">Compare Models</button>
+            <button type="button" class="btn ghost hidden" id="champion-download-btn">Download Report</button>
+            <span class="btn ghost disabled" title="Not available in this local build">Deploy Model</span>
+            <button type="button" class="btn primary" id="test-model-btn">Test this model</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h3>Journey of This Run</h3></div>
+          <ol class="journey-condensed" id="journey-condensed"></ol>
+          <button type="button" class="btn ghost" id="journey-view-pipeline-btn">View Full Pipeline</button>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h3>Model Leaderboard</h3>
+            <span class="muted small" id="leaderboard-condensed-sub"></span>
+          </div>
+          <div class="table-scroll"><table class="results-table" id="leaderboard-condensed-table"></table></div>
+          <button type="button" class="btn ghost hidden" id="leaderboard-view-all-btn">View all models</button>
+        </section>
+
+        <section class="card">
+          <div class="rationale-grid">
+            <div>
+              <h3>Why This Model?</h3>
+              <ul class="callout-list" id="why-this-model-list"></ul>
+            </div>
+            <div>
+              <h3>Why Other Models Were Not Selected?</h3>
+              <div class="table-scroll"><table class="results-table" id="why-others-table"></table></div>
+            </div>
+          </div>
+        </section>
+
+        <div class="card hidden" id="pipeline-actions-card">
+          <div class="card-head"><h3>What AI Did During This Run</h3></div>
+          <ul class="callout-list" id="pipeline-actions-list"></ul>
+        </div>
 
       <!-- new experiment on this dataset (multi-experiment spec) -->
       <div class="card checkpoint hidden" id="rerun-card">
@@ -194,19 +269,16 @@
         </form>
       </div>
 
-      <!-- live pipeline -->
-      <section class="card">
-        <div class="card-head">
-          <h3>Live pipeline progress</h3>
-          <span class="muted small" id="pipeline-sub"></span>
+      <div id="tab-test-panel-slot">
+        <div id="tab-test-panel" class="hidden" role="tabpanel">
+          <p class="muted small">Runs the saved model locally against values you enter here; nothing leaves this machine.</p>
+          <form id="predict-form" class="predict-grid"></form>
+          <div class="btn-row">
+            <button type="submit" form="predict-form" class="btn primary">Predict</button>
+          </div>
+          <div id="predict-result" class="predict-result hidden"></div>
         </div>
-        <ol class="stage-tracker" id="stage-tracker"></ol>
-        <div class="train-progress hidden" id="train-progress">
-          <div class="train-progress-text" id="train-progress-text"></div>
-          <div class="train-progress-track"><div class="train-progress-fill" id="train-progress-fill"></div></div>
-          <div class="tuning-progress-list" id="tuning-progress-list"></div>
-        </div>
-      </section>
+      </div>
 
       <!-- confirmation checkpoint -->
       <div class="card checkpoint hidden" id="confirm-card">
@@ -356,65 +428,11 @@
             <div class="quality-bars" id="quality-bars"></div>
           </div>
         </div>
-
-        <div class="card hidden" id="results-card">
-          <div class="card-head">
-            <h3>Model comparison</h3>
-            <span class="muted small" id="results-sub"></span>
-          </div>
-          <div class="chip-row">
-            <div class="chip cv-config-chip" id="cv-config-chip"></div>
-            <div class="chip cv-config-chip hidden" id="resampling-config-chip"></div>
-            <div class="chip cv-config-chip hidden" id="fs-config-chip"></div>
-          </div>
-          <div class="table-scroll"><table class="results-table" id="results-table"></table></div>
-        </div>
-
-        <div class="card hidden" id="tuning-card">
-          <div class="card-head">
-            <h3>Hyperparameter tuning trend</h3>
-            <span class="muted small" id="tuning-sub"></span>
-          </div>
-          <div id="tuning-chart"></div>
-          <ul class="tuning-legend" id="tuning-legend"></ul>
-        </div>
-
-        <div class="card hidden" id="fi-card">
-          <div class="card-head"><h3>What drives the predictions</h3></div>
-          <div class="fi-list" id="fi-list"></div>
-        </div>
-
       </section>
 
-      <!-- report + try-the-model, tabbed -->
-      <div class="card hidden" id="report-card">
-        <div class="tab-bar" role="tablist">
-          <button class="tab-btn active" id="tab-report-btn" type="button" role="tab" aria-selected="true">Report</button>
-          <button class="tab-btn" id="tab-test-btn" type="button" role="tab" aria-selected="false">Test the model</button>
-        </div>
-
-        <div id="tab-report-panel" role="tabpanel">
-          <div id="report-lede" class="report-lede hidden"></div>
-          <div id="report-body" class="report-body"></div>
-          <div class="result-actions">
-            <a class="btn primary" id="download-btn" href="#" download>Download best model</a>
-            <a class="btn ghost" id="download-script-btn" href="#" download>Download training script</a>
-            <button class="btn ghost" id="trace-toggle-btn" type="button">View LLM audit trace</button>
-          </div>
-          <details class="trace-details hidden" id="trace-details">
-            <summary>Raw LLM trace (technical)</summary>
-            <div class="trace-body" id="trace-body"></div>
-          </details>
-        </div>
-
-        <div id="tab-test-panel" class="hidden" role="tabpanel">
-          <p class="muted small">Runs the saved model locally against values you enter here; nothing leaves this machine.</p>
-          <form id="predict-form" class="predict-grid"></form>
-          <div class="btn-row">
-            <button type="submit" form="predict-form" class="btn primary">Predict</button>
-          </div>
-          <div id="predict-result" class="predict-result hidden"></div>
-        </div>
+      <div class="card hidden" id="fi-card">
+        <div class="card-head"><h3>What drives the predictions</h3></div>
+        <div class="fi-list" id="fi-list"></div>
       </div>
 
       <!-- caveats — unmissable, not fine print -->
@@ -432,9 +450,128 @@
         <ul class="callout-list" id="error-list"></ul>
       </div>
 
+      </div><!-- /tab-overview-panel -->
+
+      <div id="tab-pipeline-panel" class="hidden">
+        <!-- live pipeline -->
+        <section class="card">
+          <div class="card-head">
+            <h3>Pipeline stages</h3>
+            <span class="muted small" id="pipeline-sub"></span>
+          </div>
+          <ol class="stage-tracker" id="stage-tracker"></ol>
+          <div class="train-progress hidden" id="train-progress">
+            <div class="train-progress-text" id="train-progress-text"></div>
+            <div class="train-progress-track"><div class="train-progress-fill" id="train-progress-fill"></div></div>
+            <div class="tuning-progress-list" id="tuning-progress-list"></div>
+          </div>
+        </section>
+      </div><!-- /tab-pipeline-panel -->
+
+      <div id="tab-models-panel" class="hidden">
+        <section class="dash-grid">
+          <div class="card hidden" id="results-card">
+            <div class="card-head">
+              <h3>Model comparison</h3>
+              <span class="muted small" id="results-sub"></span>
+            </div>
+            <div class="chip-row">
+              <div class="chip cv-config-chip" id="cv-config-chip"></div>
+              <div class="chip cv-config-chip hidden" id="resampling-config-chip"></div>
+              <div class="chip cv-config-chip hidden" id="fs-config-chip"></div>
+            </div>
+            <div class="table-scroll"><table class="results-table" id="results-table"></table></div>
+          </div>
+
+          <div class="card hidden" id="tuning-card">
+            <div class="card-head">
+              <h3>Hyperparameter tuning trend</h3>
+              <span class="muted small" id="tuning-sub"></span>
+            </div>
+            <div id="tuning-chart"></div>
+            <ul class="tuning-legend" id="tuning-legend"></ul>
+          </div>
+        </section>
+      </div><!-- /tab-models-panel -->
+
+      <div id="tab-explainability-panel" class="hidden">
+        <p class="muted small">SHAP-based impact analysis isn't available for this run yet — see the "Top Drivers" card on the Overview tab for current feature importance. A future update will add per-prediction explanation charts here.</p>
+      </div><!-- /tab-explainability-panel -->
+
+      <div id="tab-artifacts-panel" class="hidden">
+        <section class="card">
+          <div class="card-head"><h3>Artifacts</h3></div>
+          <div class="result-actions">
+            <a class="btn primary" id="download-btn" href="#" download>Download best model</a>
+            <a class="btn ghost" id="download-script-btn" href="#" download>Download training script</a>
+          </div>
+        </section>
+      </div><!-- /tab-artifacts-panel -->
+
+      <div id="tab-logs-panel" class="hidden">
+        <section class="card">
+          <div class="card-head"><h3>Pipeline events</h3></div>
+          <ul class="reasoning-log" id="logs-tab-events"></ul>
+        </section>
+        <section class="card">
+          <div class="card-head"><h3>LLM audit trace</h3></div>
+          <button class="btn ghost" id="trace-toggle-btn" type="button">View LLM audit trace</button>
+          <details class="trace-details hidden" id="trace-details">
+            <summary>Raw LLM trace (technical)</summary>
+            <div class="trace-body" id="trace-body"></div>
+          </details>
+        </section>
+      </div><!-- /tab-logs-panel -->
+
       </div><!-- /run-main -->
 
-      <aside class="run-rail">
+      <aside class="run-rail" id="run-rail">
+        <div class="card hidden ai-summary-card" id="ai-summary-card">
+          <div class="card-head"><h3><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9Z"/></svg> AI Summary</h3></div>
+          <div id="report-lede" class="report-lede hidden"></div>
+          <div id="report-body" class="report-body"></div>
+        </div>
+
+        <div class="card reasoning-rail hidden" id="reasoning-rail">
+          <div class="reasoning-head">
+            <span class="live-badge"><span class="live-dot"></span>Pipeline running</span>
+            <span class="muted small" id="reasoning-step-count"></span>
+          </div>
+          <div class="reasoning-progress-track"><div class="reasoning-progress-fill" id="reasoning-progress-fill"></div></div>
+
+          <div class="reasoning-section">
+            <h4>What's happening</h4>
+            <p class="reasoning-stage-label" id="reasoning-stage-label"></p>
+            <p class="muted small" id="reasoning-what"></p>
+          </div>
+
+          <div class="reasoning-section" id="reasoning-underhood-section">
+            <h4>Under the hood</h4>
+            <ul class="reasoning-checklist" id="reasoning-checklist"></ul>
+          </div>
+
+          <div class="reasoning-why" id="reasoning-why"></div>
+
+          <div class="reasoning-section">
+            <div class="card-head"><h4>Pipeline logs (simplified)</h4></div>
+            <ul class="reasoning-log" id="reasoning-log"></ul>
+          </div>
+        </div>
+
+        <div class="card" id="next-steps-card">
+          <div class="card-head"><h3>Next Steps</h3></div>
+          <div class="next-steps-grid">
+            <button type="button" class="next-step-btn" id="nextstep-compare-btn">Compare Models</button>
+            <button type="button" class="next-step-btn" id="nextstep-artifacts-btn">Download Artifacts</button>
+            <button type="button" class="next-step-btn" id="nextstep-share-btn">Share Report</button>
+            <span class="next-step-btn disabled" title="Not available in this local build">View SHAP Report</span>
+            <span class="next-step-btn disabled" title="Not available in this local build">Deploy Model</span>
+            <span class="next-step-btn disabled" title="Not available in this local build">Generate API</span>
+            <span class="next-step-btn disabled" title="Not available in this local build">Schedule Retraining</span>
+            <span class="next-step-btn disabled" title="Not available in this local build">Monitor Model</span>
+          </div>
+        </div>
+
         <div class="card assistant-card" id="assistant-card">
           <div class="card-head">
             <h3><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9Z"/></svg> AI Assistant</h3>

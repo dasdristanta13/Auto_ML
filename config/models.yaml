@@ -6,8 +6,19 @@
 # Escape hatches: AUTOML_LLM_MODEL forces one model id for every node;
 # AUTOML_LLM_PROVIDER forces the provider (use together for a custom combo).
 #
+# EXECUTION BACKEND — native (default) uses the hand-rolled adapters in
+# src/llm/client.py for anthropic/openai/gemini. litellm routes every call
+# through the litellm library instead, which unlocks any of its 100+
+# supported providers (Bedrock, Azure, Ollama, Mistral, Cohere, ...) just by
+# setting `provider`/`model` on a profile to that provider's litellm name —
+# no new adapter code needed. Switch with `backend:` below, or the
+# AUTOML_LLM_BACKEND environment variable (takes precedence over this key).
+# litellm must be installed (`pip install litellm`) to use backend: litellm.
+#
 # API keys come from environment variables (see .env.example):
 # ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY — never hardcoded here.
+
+backend: native
 
 active_profile: openai
 
@@ -30,6 +41,14 @@ profiles:
   gemini:
     provider: gemini
     model: gemini-2.5-flash
+
+  # Example: any litellm-supported provider works here once backend:
+  # litellm is set above, with zero new code in src/llm/client.py.
+  # bedrock_claude:
+  #   provider: bedrock
+  #   model: anthropic.claude-3-haiku-20240307-v1:0
+  #   fallback_models:        # only used when backend: litellm
+  #     - openai/gpt-5-nano
 
 # Generation parameters per node — provider-independent, shared by every
 # profile. The active profile supplies provider+model; these supply the rest.
