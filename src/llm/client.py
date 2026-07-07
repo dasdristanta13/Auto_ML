@@ -290,6 +290,50 @@ def _call_gemini(system: str, user: str, model: str, temperature: float, max_tok
     return resp.text
 
 
+def _call_litellm(
+    system: str,
+    user: str,
+    provider: str,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    json_mode: bool,
+    fallback_models: list[str],
+) -> tuple[str, Optional[float]]:
+    """Route a call through litellm instead of a hand-rolled per-provider
+    adapter. The model string is built as `<provider>/<model>` — litellm
+    dispatches on this prefix, which is what lets any of its 100+ supported
+    providers (Bedrock, Azure, Ollama, Mistral, Cohere, ...) work here with
+    no new adapter code, as long as models.yaml points at them. Provider
+    quirks (e.g. OpenAI reasoning-model token params) are left to litellm's
+    own normalization rather than re-implemented here."""
+    import litellm
+
+    kwargs: dict[str, Any] = {
+        "model": f"{provider}/{model}",
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if json_mode and provider in ("openai", "azure", "gemini"):
+        kwargs["response_format"] = {"type": "json_object"}
+    if fallback_models:
+        kwargs["fallbacks"] = list(fallback_models)
+
+    resp = litellm.completion(**kwargs)
+    content = resp.choices[0].message.content
+
+    try:
+        cost = litellm.completion_cost(completion_response=resp)
+    except Exception:  # noqa: BLE001 - cost is best-effort, never fatal
+        cost = None
+
+    return content, cost
+
+
 class LLMClient:
     """Call-count/token budget is tracked per run_id per CLAUDE.md's cost-control NFR."""
 

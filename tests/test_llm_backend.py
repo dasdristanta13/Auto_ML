@@ -70,3 +70,87 @@ def test_legacy_schema_without_profiles_has_empty_fallback_models(monkeypatch):
     cfg = llm_client.node_model_config("chat")
     assert cfg["backend"] == "native"
     assert cfg["fallback_models"] == []
+
+
+class _FakeMessage:
+    def __init__(self, content):
+        self.content = content
+
+
+class _FakeChoice:
+    def __init__(self, content):
+        self.message = _FakeMessage(content)
+
+
+class _FakeCompletionResponse:
+    def __init__(self, content):
+        self.choices = [_FakeChoice(content)]
+
+
+class _FakeLiteLLM:
+    def __init__(self, content="hello from litellm", cost=0.0012, cost_error=False):
+        self.content = content
+        self.cost = cost
+        self.cost_error = cost_error
+        self.last_completion_kwargs = None
+
+    def completion(self, **kwargs):
+        self.last_completion_kwargs = kwargs
+        return _FakeCompletionResponse(self.content)
+
+    def completion_cost(self, completion_response):
+        if self.cost_error:
+            raise ValueError("no cost data for this model")
+        return self.cost
+
+
+@pytest.fixture()
+def fake_litellm(monkeypatch):
+    fake = _FakeLiteLLM()
+    monkeypatch.setitem(__import__("sys").modules, "litellm", fake)
+    return fake
+
+
+def test_call_litellm_builds_provider_model_string(fake_litellm):
+    content, cost = llm_client._call_litellm(
+        "sys", "user", "bedrock", "anthropic.claude-3-haiku-20240307-v1:0",
+        0.0, 2048, json_mode=False, fallback_models=[],
+    )
+    assert content == "hello from litellm"
+    assert cost == 0.0012
+    assert fake_litellm.last_completion_kwargs["model"] == "bedrock/anthropic.claude-3-haiku-20240307-v1:0"
+
+
+def test_call_litellm_passes_fallbacks(fake_litellm):
+    llm_client._call_litellm(
+        "sys", "user", "openai", "gpt-5-nano",
+        0.0, 2048, json_mode=False, fallback_models=["anthropic/claude-haiku-4-5"],
+    )
+    assert fake_litellm.last_completion_kwargs["fallbacks"] == ["anthropic/claude-haiku-4-5"]
+
+
+def test_call_litellm_json_mode_for_openai(fake_litellm):
+    llm_client._call_litellm(
+        "sys", "user", "openai", "gpt-5-nano",
+        0.0, 2048, json_mode=True, fallback_models=[],
+    )
+    assert fake_litellm.last_completion_kwargs["response_format"] == {"type": "json_object"}
+
+
+def test_call_litellm_no_json_mode_for_anthropic(fake_litellm):
+    llm_client._call_litellm(
+        "sys", "user", "anthropic", "claude-haiku-4-5",
+        0.0, 2048, json_mode=True, fallback_models=[],
+    )
+    assert "response_format" not in fake_litellm.last_completion_kwargs
+
+
+def test_call_litellm_cost_none_when_completion_cost_fails(monkeypatch):
+    fake = _FakeLiteLLM(cost_error=True)
+    monkeypatch.setitem(__import__("sys").modules, "litellm", fake)
+    content, cost = llm_client._call_litellm(
+        "sys", "user", "openai", "gpt-5-nano",
+        0.0, 2048, json_mode=False, fallback_models=[],
+    )
+    assert content == "hello from litellm"
+    assert cost is None
