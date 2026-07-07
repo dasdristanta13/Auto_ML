@@ -383,12 +383,21 @@ class LLMClient:
                 + json.dumps(json_schema)
             )
 
+        backend = cfg["backend"]
+        fallback_models = cfg["fallback_models"]
+
         last_error: Optional[str] = None
         attempt_user_prompt = user_prompt
         for attempt in range(retries + 1):
             self._calls_per_run[run_id] = self._calls_per_run.get(run_id, 0) + 1
+            cost: Optional[float] = None
             try:
-                if provider == "anthropic":
+                if backend == "litellm":
+                    raw, cost = _call_litellm(
+                        effective_system, attempt_user_prompt, provider, model, temperature, max_tokens,
+                        json_mode=json_schema is not None, fallback_models=fallback_models,
+                    )
+                elif provider == "anthropic":
                     raw = _call_anthropic(effective_system, attempt_user_prompt, model, temperature, max_tokens)
                 elif provider == "openai":
                     raw = _call_openai(
@@ -403,20 +412,30 @@ class LLMClient:
                 else:
                     raise ValueError(f"Unknown provider '{provider}' for node '{node}'")
             except Exception as exc:  # noqa: BLE001 - surfaced to caller after logging
-                log_llm_call(run_id, node, provider, model, effective_system, attempt_user_prompt, "", error=str(exc))
+                log_llm_call(
+                    run_id, node, provider, model, effective_system, attempt_user_prompt, "",
+                    error=str(exc), cost_usd=cost,
+                )
                 last_error = str(exc)
                 continue
 
             if json_schema is None:
-                log_llm_call(run_id, node, provider, model, effective_system, attempt_user_prompt, raw)
+                log_llm_call(
+                    run_id, node, provider, model, effective_system, attempt_user_prompt, raw, cost_usd=cost,
+                )
                 return raw
 
             try:
                 parsed = _extract_json(raw)
-                log_llm_call(run_id, node, provider, model, effective_system, attempt_user_prompt, raw)
+                log_llm_call(
+                    run_id, node, provider, model, effective_system, attempt_user_prompt, raw, cost_usd=cost,
+                )
                 return parsed
             except json.JSONDecodeError as exc:
-                log_llm_call(run_id, node, provider, model, effective_system, attempt_user_prompt, raw, error=str(exc))
+                log_llm_call(
+                    run_id, node, provider, model, effective_system, attempt_user_prompt, raw,
+                    error=str(exc), cost_usd=cost,
+                )
                 last_error = f"invalid JSON: {exc}"
                 attempt_user_prompt = (
                     user_prompt

@@ -154,3 +154,69 @@ def test_call_litellm_cost_none_when_completion_cost_fails(monkeypatch):
     )
     assert content == "hello from litellm"
     assert cost is None
+
+
+@pytest.fixture()
+def generate_cfg(monkeypatch):
+    cfg = {
+        "backend": "native",
+        "active_profile": "openai",
+        "profiles": {"openai": {"provider": "openai", "model": "gpt-5-nano"}},
+        "default": {"temperature": 0.0, "max_tokens": 4096},
+        "nodes": {},
+    }
+    monkeypatch.setattr(llm_client, "_models_config", lambda: cfg)
+    monkeypatch.setattr(
+        llm_client, "_runtime_config", lambda: {"budgets": {"max_llm_calls_per_run": 100}}
+    )
+    return cfg
+
+
+def test_generate_native_backend_calls_call_openai(generate_cfg, monkeypatch):
+    calls = {}
+
+    def fake_call_openai(system, user, model, temperature, max_tokens, json_mode):
+        calls["args"] = (system, user, model, temperature, max_tokens, json_mode)
+        return "plain text response"
+
+    monkeypatch.setattr(llm_client, "_call_openai", fake_call_openai)
+    client = llm_client.LLMClient()
+    result = client.generate("run-1", "chat", "system prompt", "user prompt")
+
+    assert result == "plain text response"
+    assert calls["args"][2] == "gpt-5-nano"
+
+
+def test_generate_litellm_backend_calls_call_litellm(generate_cfg, monkeypatch):
+    generate_cfg["backend"] = "litellm"
+    calls = {}
+
+    def fake_call_litellm(system, user, provider, model, temperature, max_tokens, json_mode, fallback_models):
+        calls["args"] = (provider, model, fallback_models)
+        return "litellm response", 0.002
+
+    monkeypatch.setattr(llm_client, "_call_litellm", fake_call_litellm)
+    client = llm_client.LLMClient()
+    result = client.generate("run-2", "chat", "system prompt", "user prompt")
+
+    assert result == "litellm response"
+    assert calls["args"] == ("openai", "gpt-5-nano", [])
+
+
+def test_generate_litellm_cost_reaches_trace_log(generate_cfg, monkeypatch):
+    monkeypatch.setattr(
+        llm_client, "_call_litellm",
+        lambda *a, **k: ("litellm response", 0.0037),
+    )
+    generate_cfg["backend"] = "litellm"
+
+    logged = {}
+
+    def fake_log_llm_call(run_id, node, provider, model, system_prompt, user_prompt, response, error=None, **extra):
+        logged["extra"] = extra
+
+    monkeypatch.setattr(llm_client, "log_llm_call", fake_log_llm_call)
+    client = llm_client.LLMClient()
+    client.generate("run-3", "chat", "system prompt", "user prompt")
+
+    assert logged["extra"]["cost_usd"] == 0.0037
