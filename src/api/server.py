@@ -48,7 +48,7 @@ from src.profiling import preview
 from src.profiling.heuristics import target_too_high_cardinality_for_classification
 from src.llm.tracing import read_trace
 from src.state import PipelineState, new_state
-from src.training.dispatch import load_model_schema, predict_one
+from src.training.dispatch import explain_prediction, load_model_schema, predict_one
 
 UPLOAD_DIR = Path("data/uploads")
 
@@ -714,6 +714,22 @@ def get_model_schema(run_id: str, _session: dict[str, Any] = Depends(require_ses
     )
 
 
+@app.get("/api/runs/{run_id}/explainability")
+def get_explainability(run_id: str, _session: dict[str, Any] = Depends(require_session)) -> dict[str, Any]:
+    """Precomputed SHAP feature impact + narrative for the winning model
+    (explainability_node) — computed once at training time, not on request."""
+    entry = _get_entry(run_id)
+    _require_model_path(entry)
+    best_model = entry["state"].get("best_model") or {}
+    explainability = best_model.get("explainability") or {
+        "method": "unavailable",
+        "feature_impact": [],
+        "narrative": None,
+        "note": "explainability has not been computed for this run yet",
+    }
+    return _json_safe(explainability)
+
+
 class PredictRequest(BaseModel):
     # raw feature values: numbers for numeric columns, strings for
     # categorical (e.g. target-encoded) columns — the model pipeline applies
@@ -734,6 +750,8 @@ def predict(
         result = predict_one(model_path, body.values)
     except Exception as exc:  # noqa: BLE001 - surfaced as a clear 400, not a 500 stack trace
         raise HTTPException(status_code=400, detail=f"could not score this input: {exc}") from exc
+    transformed_dataset_path = entry["state"].get("transformed_dataset_path", "")
+    result["contributions"] = explain_prediction(model_path, body.values, transformed_dataset_path)
     return _json_safe(result)
 
 
