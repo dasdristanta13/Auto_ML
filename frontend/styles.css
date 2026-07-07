@@ -461,6 +461,9 @@ select, textarea, input[type="text"], input[type="number"] {
 .callout-list li { display: flex; gap: var(--sp-2); align-items: flex-start; }
 .callout-list .icon { margin-top: 3px; flex-shrink: 0; }
 
+.rationale-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
+@media (max-width: 900px) { .rationale-grid { grid-template-columns: 1fr; } }
+
 /* auto-insights: tone follows the same status colors used everywhere else,
    always paired with an icon — never color-alone (DESIGN.md 5.1) */
 .insight-list li { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg-surface-raised); }

@@ -1073,6 +1073,7 @@ function render(run) {
   renderChampionBanner(run);
   renderJourneyCondensed(run);
   renderLeaderboardCondensed(run);
+  renderModelRationale(run);
   renderStatCards(run);
   renderStageTracker(run);
   renderReasoningRail(run);
@@ -1227,6 +1228,54 @@ function renderLeaderboardCondensed(run) {
 }
 
 $("leaderboard-view-all-btn").addEventListener("click", () => switchRunTab("models"));
+
+/* ================= model rationale (why this / why not others) ================= */
+
+function renderModelRationale(run) {
+  const best = run.best_model || {};
+  const results = run.training_results || [];
+  if (!best.candidate_name || results.length < 2) {
+    $("why-this-model-list").innerHTML = "";
+    $("why-others-table").innerHTML = "";
+    return;
+  }
+  const metric = (run.task_spec || {}).metric;
+  // NOTE: not `(best.tuning || {}).lower_is_better` — src/training/dispatch.py
+  // hardcodes tuning.lower_is_better to False whenever tuning was skipped for
+  // the winning candidate, even for rmse/mae. Mirror the same rule used in
+  // renderChampionBanner (and src/graph/nodes.py:338 /
+  // src/insights/auto_insights.py:140) so deltas here stay consistent with how
+  // "best" was actually chosen.
+  const lowerIsBetter = metric === "rmse" || metric === "mae";
+  const bestScore = metric && best.metrics ? Number(best.metrics[metric]) : null;
+
+  const whyThis = [];
+  if (bestScore != null) whyThis.push(`Highest ${escapeHtml(metric)} (${bestScore.toFixed(3)}) among all candidates`);
+  const bestCv = best.cv_metrics && metric && best.cv_metrics[metric];
+  if (bestCv) whyThis.push(`Stable performance across folds (CV std ${bestCv.std.toFixed(3)})`);
+  const fastestId = [...results].sort((a, b) => (a.duration_seconds ?? Infinity) - (b.duration_seconds ?? Infinity))[0]?.run_id;
+  if (fastestId === best.run_id) whyThis.push("Fastest training time among all candidates");
+  if ((best.tuning || {}).enabled) whyThis.push(`Hyperparameters tuned over ${best.tuning.trials_done} trial(s)`);
+  $("why-this-model-list").innerHTML = whyThis.map((t) => `<li>${ICONS.check}<span>${t}</span></li>`).join("") ||
+    `<li class="muted small">No further rationale available for this run.</li>`;
+
+  const others = results.filter((r) => r.run_id !== best.run_id && r.status === "succeeded");
+  let html = `<tr><th>Model</th><th>Reason</th><th>Impact</th></tr>`;
+  for (const r of others) {
+    const delta = metric && r.metrics && bestScore != null && metric in r.metrics
+      ? (lowerIsBetter ? r.metrics[metric] - bestScore : bestScore - r.metrics[metric])
+      : null;
+    const durRatio = best.duration_seconds && r.duration_seconds ? r.duration_seconds / best.duration_seconds : null;
+    let impact = "Marginal gain";
+    if (durRatio != null && durRatio > 2) impact = "High Cost";
+    else if (durRatio != null && durRatio > 1.3) impact = "Medium Cost";
+    const reason = delta != null
+      ? `${delta >= 0 ? "Lower" : "Higher"} ${escapeHtml(metric)} (${Math.abs(delta).toFixed(3)} difference)${durRatio != null && durRatio > 1.3 ? " and slower training" : ""}`
+      : "Did not outperform the champion";
+    html += `<tr><td>${escapeHtml(r.candidate_name)}</td><td>${reason}</td><td><span class="chip flagged">${impact}</span></td></tr>`;
+  }
+  $("why-others-table").innerHTML = html;
+}
 
 /* ================= stat cards ================= */
 
