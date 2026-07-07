@@ -382,8 +382,8 @@ def compute_explainability(model_path: str, transformed_dataset_path: str) -> di
     computed once after training (explainability_node). Never raises —
     unsupported estimators or SHAP failures degrade to method="unavailable"
     with an explanatory note rather than failing the pipeline."""
-    cfg = _explainability_config()
     try:
+        cfg = _explainability_config()
         bundle = joblib.load(model_path)
         fit_estimator = bundle["estimator"]
         prep = fit_estimator.named_steps["prep"]
@@ -421,8 +421,8 @@ def explain_prediction(model_path: str, values: dict[str, Any], transformed_data
     """Best-effort per-row SHAP contribution for a single user-submitted
     prediction row, computed on demand (POST /predict). Returns None rather
     than raising when SHAP can't explain this estimator/input."""
-    cfg = _explainability_config()
     try:
+        cfg = _explainability_config()
         bundle = joblib.load(model_path)
         fit_estimator = bundle["estimator"]
         prep = fit_estimator.named_steps["prep"]
