@@ -983,8 +983,11 @@ function renderModelRationale(run) {
     let impact = "Marginal gain";
     if (durRatio != null && durRatio > 2) impact = "High Cost";
     else if (durRatio != null && durRatio > 1.3) impact = "Medium Cost";
+    // delta >= 0 always means "worse than champion", but whether that means a
+    // higher or lower raw metric value depends on lowerIsBetter — don't
+    // conflate delta's sign with the raw-value comparison word.
     const reason = delta != null
-      ? `${delta >= 0 ? "Lower" : "Higher"} ${escapeHtml(metric)} (${Math.abs(delta).toFixed(3)} difference)${durRatio != null && durRatio > 1.3 ? " and slower training" : ""}`
+      ? `${(lowerIsBetter === (delta >= 0)) ? "Higher" : "Lower"} ${escapeHtml(metric)} (${Math.abs(delta).toFixed(3)} difference)${durRatio != null && durRatio > 1.3 ? " and slower training" : ""}`
       : "Did not outperform the champion";
     html += `<tr><td>${escapeHtml(r.candidate_name)}</td><td>${reason}</td><td><span class="chip flagged">${impact}</span></td></tr>`;
   }
@@ -1131,25 +1134,27 @@ Replace with:
 
 (As in Task 3 Step 1, replace the literal `${ICONS.sparkle}` placeholder with the actual inline sparkle `<svg>` — copy it from `ICONS.sparkle` in `app.js:25`: `<svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9Z"/></svg>`.)
 
-In `frontend/app.js`, find `renderReport` (`app.js:2007`). It currently does:
+**Note:** Task 1's implementer found that the brief's original description of this step didn't account for the fact that `#report-card` (and the `$("report-card")` reference inside `renderReport`) had to be removed *during Task 1 itself* — leaving it would have thrown on every run load. So `renderReport` currently (as of Task 1's commit) looks like this, with no card-hiding at all:
 
 ```js
 function renderReport(run) {
-  const card = $("report-card");
-  if (!run.report) { card.classList.add("hidden"); return; }
-  card.classList.remove("hidden");
+  if (!run.report) return;
+
+  const lines = run.report.split("\n").filter((l) => l.trim());
 ```
 
-`#report-card` no longer exists (deleted in Task 1 Step 4) — replace both lines referencing it with `#ai-summary-card`:
+Now that `#ai-summary-card` exists (from Step 1 above), restore proper show/hide behavior keyed on it:
 
 ```js
 function renderReport(run) {
   const card = $("ai-summary-card");
   if (!run.report) { card.classList.add("hidden"); return; }
   card.classList.remove("hidden");
+
+  const lines = run.report.split("\n").filter((l) => l.trim());
 ```
 
-(Leave the rest of `renderReport` — the `report-lede`/`report-body`/download-link logic — unchanged; only the two `report-card` references become `ai-summary-card`. Double check no other reference to `$("report-card")` remains anywhere in `app.js`.)
+(Leave the rest of `renderReport` — the `report-lede`/`report-body`/download-link logic — unchanged; only add the `card` show/hide lines shown above.)
 
 ### Step 2: Next Steps grid markup
 
