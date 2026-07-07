@@ -1004,6 +1004,10 @@ function openRun(runId) {
   $("trace-details").classList.add("hidden");
   $("trace-body").textContent = "";
   predictFormLoadedFor = null;
+  explainabilityLoadedFor = null;
+  $("explainability-narrative").textContent = "";
+  $("explainability-list").innerHTML = "";
+  $("explainability-empty").classList.add("hidden");
   $("predict-result").classList.add("hidden");
   chatPendingQuestion = null;
   $("chat-input").value = "";
@@ -2247,6 +2251,11 @@ async function loadExplainabilityTab(run) {
   }
   if (explainabilityLoadedFor === run.run_id) return;
   explainabilityLoadedFor = run.run_id;
+
+  $("explainability-narrative").textContent = "";
+  $("explainability-list").innerHTML = "";
+  $("explainability-empty").textContent = "Loading explainability data…";
+  $("explainability-empty").classList.remove("hidden");
 
   try {
     const data = await (await authFetch(`/api/runs/${run.run_id}/explainability`)).json();
