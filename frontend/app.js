@@ -1211,8 +1211,17 @@ function renderLeaderboardCondensed(run) {
 
   const showAll = results.length <= 6;
   const champion = results.find((r) => r.run_id === bestId);
-  const others = results.filter((r) => r.run_id !== bestId);
-  const shown = showAll ? results : [champion, ...others.slice(0, 5)].filter(Boolean);
+  const lowerIsBetter = primary === "rmse" || primary === "mae";
+  const others = results
+    .filter((r) => r.run_id !== bestId)
+    .sort((a, b) => {
+      const aHas = a.metrics && primary in a.metrics, bHas = b.metrics && primary in b.metrics;
+      if (!aHas && !bHas) return 0;
+      if (!aHas) return 1;
+      if (!bHas) return -1;
+      return lowerIsBetter ? a.metrics[primary] - b.metrics[primary] : b.metrics[primary] - a.metrics[primary];
+    });
+  const shown = showAll ? [champion, ...others].filter(Boolean) : [champion, ...others.slice(0, 5)].filter(Boolean);
 
   $("leaderboard-condensed-sub").textContent = primary ? `ranked by ${primary}` : "";
   $("leaderboard-view-all-btn").classList.toggle("hidden", showAll);
