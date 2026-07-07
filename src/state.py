@@ -70,6 +70,18 @@ class FeatureImportance(BaseModel):
     importance: float
 
 
+class FeatureImpact(BaseModel):
+    feature: str
+    mean_abs_shap: float
+
+
+class ExplainabilityResult(BaseModel):
+    method: Literal["tree", "linear", "kernel", "unavailable"]
+    feature_impact: list[FeatureImpact] = Field(default_factory=list)
+    narrative: Optional[str] = None
+    note: Optional[str] = None
+
+
 class CVMetric(BaseModel):
     mean: float
     std: float
@@ -118,6 +130,7 @@ class TrainingResult(BaseModel):
     tuning: TuningInfo = Field(default_factory=TuningInfo)
     resampling_applied: Optional[str] = None  # "smote" | "random_oversample" | "random_undersample" | None
     resampling_note: Optional[str] = None  # explains an auto-fallback (e.g. SMOTE -> random oversampling)
+    explainability: Optional[ExplainabilityResult] = None
 
 
 class PipelineState(TypedDict, total=False):

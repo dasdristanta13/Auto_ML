@@ -332,6 +332,121 @@ def _feature_importance(estimator, feature_names: list[str]) -> list[dict[str, A
     return [{"feature": name, "importance": round(value / total, 4)} for name, value in ranked[:_TOP_N_FEATURE_IMPORTANCE]]
 
 
+def _explainability_config() -> dict[str, Any]:
+    with open(_RUNTIME_CONFIG_PATH, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)["explainability"]
+
+
+def _reduce_shap_values(values: np.ndarray) -> np.ndarray:
+    """Collapse a possible (samples, features, classes) SHAP output down to
+    (samples, features): binary classification keeps the positive class'
+    contribution (matching predict_one's proba[:, 1] convention elsewhere in
+    this module); anything else averages |SHAP| across classes."""
+    if values.ndim == 2:
+        return values
+    if values.shape[-1] == 2:
+        return values[:, :, 1]
+    return np.abs(values).mean(axis=2)
+
+
+def _shap_method_label(explainer) -> str:
+    name = type(explainer).__name__.lower()
+    if "tree" in name:
+        return "tree"
+    if "linear" in name:
+        return "linear"
+    return "kernel"
+
+
+def _build_shap_explainer(model, background: np.ndarray, feature_names: list[str]):
+    """Mirrors _feature_importance's own dispatch: tree ensembles
+    (feature_importances_) and linear models (coef_) get shap's fast, exact
+    Tree/Linear explainer by passing the raw estimator; anything else falls
+    back to a model-agnostic explainer over predict_proba/predict."""
+    import shap
+
+    if hasattr(model, "feature_importances_") or hasattr(model, "coef_"):
+        return shap.Explainer(model, background, feature_names=feature_names)
+    predict_fn = model.predict_proba if hasattr(model, "predict_proba") else model.predict
+    return shap.Explainer(predict_fn, background, feature_names=feature_names)
+
+
+def _shap_background(transformed_dataset_path: str, feature_columns: list[str], max_rows: int) -> pd.DataFrame:
+    df = load_dataset(transformed_dataset_path)
+    n = min(max_rows, len(df))
+    return df[feature_columns].sample(n=n, random_state=0)
+
+
+def compute_explainability(model_path: str, transformed_dataset_path: str) -> dict[str, Any]:
+    """Best-effort aggregate SHAP feature impact for the winning model,
+    computed once after training (explainability_node). Never raises —
+    unsupported estimators or SHAP failures degrade to method="unavailable"
+    with an explanatory note rather than failing the pipeline."""
+    cfg = _explainability_config()
+    try:
+        bundle = joblib.load(model_path)
+        fit_estimator = bundle["estimator"]
+        prep = fit_estimator.named_steps["prep"]
+        model = fit_estimator.named_steps["model"]
+        feature_names = [str(n) for n in prep.get_feature_names_out()]
+
+        sample = _shap_background(transformed_dataset_path, bundle["feature_columns"], cfg["max_background_rows"])
+        background = np.asarray(prep.transform(sample))
+
+        explainer = _build_shap_explainer(model, background, feature_names)
+        shap_values = explainer(background)
+        values = _reduce_shap_values(np.asarray(shap_values.values))
+        mean_abs = np.abs(values).mean(axis=0)
+
+        ranked = sorted(zip(feature_names, mean_abs), key=lambda pair: pair[1], reverse=True)
+        top_n = cfg["top_n_features"]
+        return {
+            "method": _shap_method_label(explainer),
+            "feature_impact": [
+                {"feature": name, "mean_abs_shap": round(float(value), 6)} for name, value in ranked[:top_n]
+            ],
+            "narrative": None,
+            "note": None,
+        }
+    except Exception as exc:  # noqa: BLE001 - explainability is best-effort, never fatal
+        return {
+            "method": "unavailable",
+            "feature_impact": [],
+            "narrative": None,
+            "note": f"SHAP explanation unavailable for this model: {exc}",
+        }
+
+
+def explain_prediction(model_path: str, values: dict[str, Any], transformed_dataset_path: str) -> Optional[list[dict[str, Any]]]:
+    """Best-effort per-row SHAP contribution for a single user-submitted
+    prediction row, computed on demand (POST /predict). Returns None rather
+    than raising when SHAP can't explain this estimator/input."""
+    cfg = _explainability_config()
+    try:
+        bundle = joblib.load(model_path)
+        fit_estimator = bundle["estimator"]
+        prep = fit_estimator.named_steps["prep"]
+        model = fit_estimator.named_steps["model"]
+        feature_columns = bundle["feature_columns"]
+        feature_names = [str(n) for n in prep.get_feature_names_out()]
+
+        sample = _shap_background(transformed_dataset_path, feature_columns, cfg["max_background_rows"])
+        background = np.asarray(prep.transform(sample))
+
+        row = pd.DataFrame([{col: values.get(col, np.nan) for col in feature_columns}])
+        row_transformed = np.asarray(prep.transform(row))
+
+        explainer = _build_shap_explainer(model, background, feature_names)
+        shap_values = explainer(row_transformed)
+        row_values = _reduce_shap_values(np.asarray(shap_values.values))[0]
+
+        ranked = sorted(zip(feature_names, row_values), key=lambda pair: abs(pair[1]), reverse=True)
+        top_n = cfg["top_n_features"]
+        return [{"feature": name, "shap_value": round(float(value), 6)} for name, value in ranked[:top_n]]
+    except Exception:  # noqa: BLE001 - per-row explanation is best-effort
+        return None
+
+
 def _evaluate(task_type: str, y_test: pd.Series, y_pred, y_proba=None) -> dict[str, float]:
     if task_type == "classification":
         metrics = {
