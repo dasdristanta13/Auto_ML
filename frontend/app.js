@@ -1094,6 +1094,7 @@ function render(run) {
   renderInsights(run);
   renderResults(run);
   renderTuningTrend(run);
+  renderExperimentsTab(run);
   renderFeatureImportance(run);
   renderActivity(run);
   renderReport(run);
@@ -2008,6 +2009,12 @@ function renderQuality(run) {
     .join("");
 }
 
+/* ================= experiments tab ================= */
+
+function renderExperimentsTab(run) {
+  // Tasks 2-7 fill this in: stat cards, bar chart, trend chart, table, donuts, side panel.
+}
+
 /* ================= results table ================= */
 
 function renderResults(run) {
@@ -2373,7 +2380,7 @@ $("trace-toggle-btn").addEventListener("click", async () => {
   }
 });
 
-const RUN_TABS = ["overview", "pipeline", "models", "explainability", "artifacts", "logs"];
+const RUN_TABS = ["overview", "pipeline", "experiments", "models", "explainability", "artifacts", "logs"];
 
 function switchRunTab(name) {
   for (const tab of RUN_TABS) {

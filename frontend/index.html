@@ -190,6 +190,7 @@
         <button class="tab-btn active" id="tab-overview-btn" type="button" role="tab" aria-selected="true">Overview</button>
         <button class="tab-btn" id="tab-data-btn" type="button" role="tab" aria-selected="false">Data</button>
         <button class="tab-btn" id="tab-pipeline-btn" type="button" role="tab" aria-selected="false">Pipeline</button>
+        <button class="tab-btn" id="tab-experiments-btn" type="button" role="tab" aria-selected="false">Experiments</button>
         <button class="tab-btn" id="tab-models-btn" type="button" role="tab" aria-selected="false">Models Compared</button>
         <button class="tab-btn" id="tab-explainability-btn" type="button" role="tab" aria-selected="false">Explainability</button>
         <button class="tab-btn" id="tab-artifacts-btn" type="button" role="tab" aria-selected="false">Artifacts</button>
@@ -493,6 +494,15 @@
           </div>
         </section>
       </div><!-- /tab-models-panel -->
+
+      <div id="tab-experiments-panel" class="hidden">
+        <div class="experiments-layout">
+          <div class="experiments-main">
+            <section class="stat-row" id="exp-stat-cards"></section>
+          </div>
+          <aside class="card" id="exp-best-panel"></aside>
+        </div>
+      </div><!-- /tab-experiments-panel -->
 
       <div id="tab-explainability-panel" class="hidden">
         <div class="card" id="explainability-card">
