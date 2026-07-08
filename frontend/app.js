@@ -2012,7 +2012,43 @@ function renderQuality(run) {
 /* ================= experiments tab ================= */
 
 function renderExperimentsTab(run) {
-  // Tasks 2-7 fill this in: stat cards, bar chart, trend chart, table, donuts, side panel.
+  renderExperimentsStatCards(run);
+}
+
+function renderExperimentsStatCards(run) {
+  const results = run.training_results || [];
+  const best = run.best_model || {};
+  const metric = (run.task_spec || {}).metric;
+  const totalTrials = results.reduce((sum, r) => sum + (r.tuning?.trials_done || 1), 0);
+  const avgDuration = results.length
+    ? results.reduce((sum, r) => sum + (r.duration_seconds || 0), 0) / results.length
+    : 0;
+  const totalDuration = results.reduce((sum, r) => sum + (r.duration_seconds || 0), 0);
+  const bestCv = metric && best.cv_metrics && best.cv_metrics[metric];
+  const bestScore = bestCv ? bestCv.mean : (metric && best.metrics && metric in best.metrics ? Number(best.metrics[metric]) : null);
+
+  const cards = [
+    { icon: "layers", tint: "violet", label: "Total Experiments", value: String(totalTrials), sub: "trials across all candidates" },
+    { icon: "grid", tint: "violet", label: "Models Evaluated", value: String(results.length), sub: "unique candidates" },
+    { icon: "trophy", tint: "amber", label: `Best ${metric ? metric.toUpperCase() : "Score"}${bestCv ? " (CV)" : ""}`,
+      value: bestScore != null ? bestScore.toFixed(3) : "—", sub: escapeHtml(best.candidate_name || "—") },
+    { icon: "clock", tint: "green", label: "Avg. Training Time", value: formatDuration(avgDuration), sub: "per candidate" },
+    { icon: "cpu", tint: "green", label: "Total Compute Time", value: formatDuration(totalDuration), sub: "total wall time" },
+  ];
+
+  $("exp-stat-cards").innerHTML = cards
+    .map(
+      (c) => `
+      <div class="stat-card">
+        <span class="stat-icon ${c.tint}">${ICONS[c.icon]}</span>
+        <div class="stat-body">
+          <div class="stat-label">${escapeHtml(c.label)}</div>
+          <div class="stat-value">${c.value}</div>
+          <div class="stat-sub">${c.sub}</div>
+        </div>
+      </div>`
+    )
+    .join("");
 }
 
 /* ================= results table ================= */
