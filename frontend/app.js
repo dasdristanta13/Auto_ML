@@ -2013,6 +2013,7 @@ function renderQuality(run) {
 
 function renderExperimentsTab(run) {
   renderExperimentsStatCards(run);
+  renderExperimentsBarChart(run);
 }
 
 function renderExperimentsStatCards(run) {
@@ -2048,6 +2049,40 @@ function renderExperimentsStatCards(run) {
         </div>
       </div>`
     )
+    .join("");
+}
+
+function renderExperimentsBarChart(run) {
+  const results = (run.training_results || []).filter((r) => r.status === "succeeded");
+  const metric = (run.task_spec || {}).metric;
+  const bestId = (run.best_model || {}).run_id;
+  const card = $("exp-bar-chart").closest(".card");
+  if (!results.length || !metric) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+
+  const lowerIsBetter = metric === "rmse" || metric === "mae";
+  const withMetric = results.filter((r) => r.metrics && metric in r.metrics);
+  const sorted = [...withMetric].sort((a, b) =>
+    lowerIsBetter ? a.metrics[metric] - b.metrics[metric] : b.metrics[metric] - a.metrics[metric]
+  );
+  $("exp-bar-sub").textContent = `ranked by ${metric}`;
+
+  const values = sorted.map((r) => Number(r.metrics[metric]));
+  const allUnitRange = values.every((v) => v >= 0 && v <= 1);
+  const scaleMax = allUnitRange ? 1 : Math.max(...values) * 1.15;
+
+  $("exp-bar-chart").innerHTML = sorted
+    .map((r) => {
+      const value = Number(r.metrics[metric]);
+      const pct = Math.max((value / scaleMax) * 100, 1);
+      const isBest = r.run_id === bestId;
+      return `
+      <div class="exp-bar-col" title="${escapeHtml(r.candidate_name)}: ${value.toFixed(3)}">
+        <span class="exp-bar-value">${value.toFixed(3)}</span>
+        <div class="exp-bar-track"><div class="exp-bar-fill ${isBest ? "champion" : ""}" style="height:${pct.toFixed(1)}%"></div></div>
+        <span class="exp-bar-name">${escapeHtml(r.candidate_name)}</span>
+      </div>`;
+    })
     .join("");
 }
 
