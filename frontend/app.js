@@ -2016,6 +2016,7 @@ function renderExperimentsTab(run) {
   renderExperimentsTrend(run);
   renderExperimentsTable(run);
   renderExperimentsDonuts(run);
+  renderExperimentsBestPanel(run);
 }
 
 function renderExperimentsStatCards(run) {
@@ -2368,6 +2369,66 @@ function renderExperimentsDonuts(run) {
   const computeColors = [toRgba(base, 1), toRgba(base, 0.65), toRgba(base, 0.35)].filter((_, i) => computeCounts[i] > 0);
   $("exp-donut-compute-sub").textContent = `${results.length} candidate(s)`;
   drawDonut("exp-donut-compute", "exp-donut-compute-center", "exp-donut-compute-legend", computeEntries, computeColors, `${results.length}<small>total</small>`);
+}
+
+function classImbalanceRatioLabel(run) {
+  const spec = run.task_spec || {};
+  const target = (run.profile_columns || []).find((c) => c.name === spec.target_column);
+  const entries = target && target.top_values ? Object.entries(target.top_values).sort((a, b) => b[1] - a[1]) : [];
+  if (spec.task_type !== "classification" || entries.length < 2) return null;
+  const majority = entries[0][1], minority = entries[entries.length - 1][1];
+  if (!minority) return null;
+  const total = majority + minority;
+  return `${Math.round((majority / total) * 100)}:${Math.round((minority / total) * 100)}`;
+}
+
+function renderExperimentsBestPanel(run) {
+  const best = run.best_model || {};
+  const panel = $("exp-best-panel");
+  if (!best.candidate_name) { panel.innerHTML = `<p class="muted small">No champion selected yet.</p>`; return; }
+
+  const metric = (run.task_spec || {}).metric;
+  const results = run.training_results || [];
+  const metricNames = [...new Set(results.flatMap((r) => Object.keys(r.metrics || {})))];
+  const secondary = metricNames.find((m) => m !== metric);
+  const trials = best.tuning && best.tuning.enabled ? `${best.tuning.trials_done}/${best.tuning.trials_total}` : "no tuning";
+
+  const metricRows = [metric, secondary]
+    .filter(Boolean)
+    .map((m) => {
+      const cv = best.cv_metrics && best.cv_metrics[m];
+      const value = cv ? `${cv.mean.toFixed(3)} ± ${cv.std.toFixed(3)}` : (best.metrics && m in best.metrics ? Number(best.metrics[m]).toFixed(3) : "—");
+      return `<div class="exp-best-row"><span class="label">${escapeHtml(m)}${cv ? " (CV mean)" : ""}</span><span class="value">${value}</span></div>`;
+    })
+    .join("");
+
+  const ratio = classImbalanceRatioLabel(run);
+  const resampling = run.resampling_plan || {};
+  const dataUsed = resampling.enabled && best.resampling_applied
+    ? `${best.resampling_applied.replaceAll("_", " ")}${ratio ? ` (${ratio})` : ""}`
+    : "no resampling";
+
+  panel.innerHTML = `
+    <div class="exp-best-header">
+      <span class="stat-icon amber">${ICONS.trophy}</span>
+      <div>
+        <div class="stat-label">Best Experiment</div>
+        <h3>${escapeHtml(best.candidate_name)}</h3>
+      </div>
+    </div>
+    <div class="exp-best-row"><span class="label">Trials</span><span class="value">${escapeHtml(trials)}</span></div>
+    <div class="exp-best-row"><span class="label">Status</span><span class="value">${escapeHtml((best.status || "succeeded").replaceAll("_", " "))}</span></div>
+    <div class="exp-best-section">
+      <h4>Key Metrics</h4>
+      ${metricRows}
+    </div>
+    <div class="exp-best-section">
+      <h4>Training Info</h4>
+      <div class="exp-best-row"><span class="label">Training Time</span><span class="value">${best.duration_seconds != null ? formatDuration(best.duration_seconds) : "—"}</span></div>
+      <div class="exp-best-row"><span class="label">Start Time</span><span class="value">${run.created_at ? new Date(run.created_at * 1000).toLocaleString() : "—"}</span></div>
+      <div class="exp-best-row"><span class="label">Data Used</span><span class="value">${escapeHtml(dataUsed)}</span></div>
+      <div class="exp-best-row"><span class="label">Folds</span><span class="value">${best.cv_folds ? `${best.cv_folds}-fold CV` : "no CV"}</span></div>
+    </div>`;
 }
 
 /* ================= AI assistant panel ================= */
