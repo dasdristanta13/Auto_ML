@@ -489,7 +489,8 @@ select, textarea, input[type="text"], input[type="number"] {
 
 /* donut */
 .donut-wrap { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; position: relative; }
-#donut, #classdist-donut { width: 150px; height: 150px; flex-shrink: 0; }
+#donut, #classdist-donut,
+#exp-donut-model, #exp-donut-status, #exp-donut-outcome, #exp-donut-compute { width: 150px; height: 150px; flex-shrink: 0; }
 .donut-center {
   position: absolute; left: 75px; top: 75px; transform: translate(-50%, -50%);
   text-align: center; font-family: var(--font-display); font-weight: 700; font-size: var(--text-base);

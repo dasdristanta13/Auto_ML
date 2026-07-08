@@ -2015,6 +2015,7 @@ function renderExperimentsTab(run) {
   renderExperimentsBarChart(run);
   renderExperimentsTrend(run);
   renderExperimentsTable(run);
+  renderExperimentsDonuts(run);
 }
 
 function renderExperimentsStatCards(run) {
@@ -2275,6 +2276,98 @@ function renderExperimentsTable(run) {
     </tr>`;
   });
   $("exp-table").innerHTML = html;
+}
+
+/* ================= experiments: distribution donuts ================= */
+
+function drawDonut(svgId, centerId, legendId, entries, colors, centerLabel) {
+  const total = entries.reduce((acc, [, n]) => acc + n, 0);
+  if (!total) { $(svgId).innerHTML = ""; $(centerId).innerHTML = ""; $(legendId).innerHTML = ""; return; }
+  const R = 44, C = 2 * Math.PI * R;
+  const gapPx = entries.length > 1 ? 3 : 0;
+  let offset = 0;
+  let svg = "";
+  entries.forEach(([, count], i) => {
+    const frac = count / total;
+    const len = Math.max(frac * C - gapPx, 1);
+    svg += `<circle cx="60" cy="60" r="${R}" fill="none" stroke="${colors[i % colors.length]}"
+      stroke-width="14" stroke-linecap="butt"
+      stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-offset}"
+      transform="rotate(-90 60 60)"/>`;
+    offset += frac * C;
+  });
+  $(svgId).innerHTML = svg;
+  $(centerId).innerHTML = centerLabel;
+  $(legendId).innerHTML = entries
+    .map(([label, count], i) => `
+      <li><span class="swatch" style="background:${colors[i % colors.length]}"></span>
+      ${escapeHtml(label)}<span class="count">${count} (${Math.round((count / total) * 100)}%)</span></li>`)
+    .join("");
+}
+
+function renderExperimentsDonuts(run) {
+  const results = run.training_results || [];
+  const bestId = (run.best_model || {}).run_id;
+  const metric = (run.task_spec || {}).metric;
+  const styles = getComputedStyle(document.documentElement);
+  const cssVar = (k) => styles.getPropertyValue(k).trim();
+
+  // By Model — trial-count share per candidate, 8 named + "Other" fold-in
+  const named = results.slice(0, 8);
+  const overflow = results.slice(8);
+  const modelEntries = named.map((r) => [r.candidate_name, r.tuning?.trials_done || 1]);
+  const modelColors = EXP_TREND_COLOR_KEYS.map(cssVar);
+  if (overflow.length) {
+    modelEntries.push(["Other", overflow.reduce((s, r) => s + (r.tuning?.trials_done || 1), 0)]);
+    modelColors.push(cssVar("--text-secondary"));
+  }
+  $("exp-donut-model-sub").textContent = `${results.length} candidate(s)`;
+  drawDonut("exp-donut-model", "exp-donut-model-center", "exp-donut-model-legend", modelEntries, modelColors, `${results.length}<small>models</small>`);
+
+  // By Status — fixed status colors, never categorical
+  const statusOrder = ["succeeded", "failed", "timed_out", "running", "pending"];
+  const statusColor = { succeeded: cssVar("--accent-success"), failed: cssVar("--accent-danger"), timed_out: cssVar("--accent-warning"), running: cssVar("--text-secondary"), pending: cssVar("--text-secondary") };
+  const statusCounts = {};
+  for (const r of results) statusCounts[r.status] = (statusCounts[r.status] || 0) + 1;
+  const statusEntries = statusOrder.filter((s) => statusCounts[s]).map((s) => [s.replaceAll("_", " "), statusCounts[s]]);
+  const statusColors = statusOrder.filter((s) => statusCounts[s]).map((s) => statusColor[s]);
+  $("exp-donut-status-sub").textContent = `${results.length} total`;
+  drawDonut("exp-donut-status", "exp-donut-status-center", "exp-donut-status-legend", statusEntries, statusColors, `${results.length}<small>total</small>`);
+
+  // By Outcome vs champion — champion / close contender (within 2% relative) / trailed
+  const best = run.best_model || {};
+  const bestScore = metric && best.metrics && metric in best.metrics ? Number(best.metrics[metric]) : null;
+  const lowerIsBetter = metric === "rmse" || metric === "mae";
+  let champCount = 0, closeCount = 0, trailedCount = 0;
+  for (const r of results) {
+    if (r.run_id === bestId) { champCount += 1; continue; }
+    if (bestScore == null || !r.metrics || !(metric in r.metrics)) { trailedCount += 1; continue; }
+    const rel = Math.abs(r.metrics[metric] - bestScore) / Math.abs(bestScore || 1);
+    const better = lowerIsBetter ? r.metrics[metric] < bestScore : r.metrics[metric] > bestScore;
+    if (rel <= 0.02 || better) closeCount += 1; else trailedCount += 1;
+  }
+  const outcomeEntries = [["Champion", champCount], ["Close contender", closeCount], ["Trailed", trailedCount]].filter(([, n]) => n > 0);
+  const outcomeColorMap = { Champion: cssVar("--accent-primary"), "Close contender": cssVar("--accent-success"), Trailed: cssVar("--text-secondary") };
+  const outcomeColors = outcomeEntries.map(([label]) => outcomeColorMap[label]);
+  $("exp-donut-outcome-sub").textContent = `vs ${escapeHtml(best.candidate_name || "champion")}`;
+  drawDonut("exp-donut-outcome", "exp-donut-outcome-center", "exp-donut-outcome-legend", outcomeEntries, outcomeColors, `${results.length}<small>total</small>`);
+
+  // By Compute Time — ordinal buckets, one hue at 3 opacities
+  const buckets = [
+    { label: "< 30s", test: (d) => d < 30 },
+    { label: "30s - 2m", test: (d) => d >= 30 && d <= 120 },
+    { label: "> 2m", test: (d) => d > 120 },
+  ];
+  const base = cssVar("--cat-2");
+  const toRgba = (hex, alpha) => {
+    const n = parseInt(hex.replace("#", ""), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+  };
+  const computeCounts = buckets.map((b) => results.filter((r) => r.duration_seconds != null && b.test(r.duration_seconds)).length);
+  const computeEntries = buckets.map((b, i) => [b.label, computeCounts[i]]).filter(([, n]) => n > 0);
+  const computeColors = [toRgba(base, 1), toRgba(base, 0.65), toRgba(base, 0.35)].filter((_, i) => computeCounts[i] > 0);
+  $("exp-donut-compute-sub").textContent = `${results.length} candidate(s)`;
+  drawDonut("exp-donut-compute", "exp-donut-compute-center", "exp-donut-compute-legend", computeEntries, computeColors, `${results.length}<small>total</small>`);
 }
 
 /* ================= AI assistant panel ================= */
