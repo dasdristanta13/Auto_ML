@@ -190,7 +190,6 @@
         <button class="tab-btn active" id="tab-overview-btn" type="button" role="tab" aria-selected="true">Overview</button>
         <button class="tab-btn" id="tab-data-btn" type="button" role="tab" aria-selected="false">Data</button>
         <button class="tab-btn" id="tab-experiments-btn" type="button" role="tab" aria-selected="false">Experiments</button>
-        <button class="tab-btn" id="tab-models-btn" type="button" role="tab" aria-selected="false">Models Compared</button>
         <button class="tab-btn" id="tab-explainability-btn" type="button" role="tab" aria-selected="false">Explainability</button>
         <button class="tab-btn" id="tab-artifacts-btn" type="button" role="tab" aria-selected="false">Artifacts</button>
         <button class="tab-btn" id="tab-logs-btn" type="button" role="tab" aria-selected="false">Logs</button>
@@ -452,23 +451,6 @@
 
       </div><!-- /tab-overview-panel -->
 
-      <div id="tab-models-panel" class="hidden">
-        <section class="dash-grid">
-          <div class="card hidden" id="results-card">
-            <div class="card-head">
-              <h3>Model comparison</h3>
-              <span class="muted small" id="results-sub"></span>
-            </div>
-            <div class="chip-row">
-              <div class="chip cv-config-chip" id="cv-config-chip"></div>
-              <div class="chip cv-config-chip hidden" id="resampling-config-chip"></div>
-              <div class="chip cv-config-chip hidden" id="fs-config-chip"></div>
-            </div>
-            <div class="table-scroll"><table class="results-table" id="results-table"></table></div>
-          </div>
-        </section>
-      </div><!-- /tab-models-panel -->
-
       <div id="tab-experiments-panel" class="hidden">
         <section class="card">
           <div class="card-head">
@@ -499,8 +481,13 @@
               <ul class="tuning-legend" id="exp-trend-legend"></ul>
               <p class="muted small hidden" id="exp-trend-empty">No candidates had hyperparameter tuning enabled for this run, so there's no trial-by-trial trend to show.</p>
             </div>
-            <div class="card">
+            <div class="card dense">
               <div class="card-head"><h3>All Experiments</h3><span class="muted small" id="exp-table-sub"></span></div>
+              <div class="chip-row">
+                <div class="chip cv-config-chip" id="cv-config-chip"></div>
+                <div class="chip cv-config-chip hidden" id="resampling-config-chip"></div>
+                <div class="chip cv-config-chip hidden" id="fs-config-chip"></div>
+              </div>
               <div class="table-scroll"><table class="results-table" id="exp-table"></table></div>
             </div>
             <section class="dash-grid">

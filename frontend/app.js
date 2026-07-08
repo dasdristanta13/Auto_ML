@@ -1150,7 +1150,7 @@ function renderChampionBanner(run) {
   $("champion-download-btn").classList.toggle("hidden", !run.report);
 }
 
-$("champion-compare-btn").addEventListener("click", () => switchRunTab("models"));
+$("champion-compare-btn").addEventListener("click", () => switchRunTab("experiments"));
 $("champion-download-btn").addEventListener("click", (e) => {
   e.preventDefault();
   $("export-report-btn").click();
@@ -1181,7 +1181,7 @@ function renderJourneyCondensed(run) {
 
 $("journey-view-pipeline-btn").addEventListener("click", () => switchRunTab("experiments"));
 
-$("nextstep-compare-btn").addEventListener("click", () => switchRunTab("models"));
+$("nextstep-compare-btn").addEventListener("click", () => switchRunTab("experiments"));
 $("nextstep-artifacts-btn").addEventListener("click", () => switchRunTab("artifacts"));
 $("nextstep-share-btn").addEventListener("click", () => $("share-btn").click());
 
@@ -1247,7 +1247,7 @@ function renderLeaderboardCondensed(run) {
   $("leaderboard-condensed-table").innerHTML = html;
 }
 
-$("leaderboard-view-all-btn").addEventListener("click", () => switchRunTab("models"));
+$("leaderboard-view-all-btn").addEventListener("click", () => switchRunTab("experiments"));
 
 /* ================= model rationale (why this / why not others) ================= */
 
@@ -2095,12 +2095,6 @@ function renderExperimentsBarChart(run) {
 
 function renderResults(run) {
   const results = run.training_results || [];
-  const card = $("results-card");
-  if (!results.length) { card.classList.add("hidden"); return; }
-  card.classList.remove("hidden");
-
-  const metric = (run.task_spec || {}).metric;
-  $("results-sub").textContent = metric ? `ranked by ${metric}` : "";
 
   const cvConfig = run.cv_config || {};
   const cvChip = $("cv-config-chip");
@@ -2141,23 +2135,6 @@ function renderResults(run) {
   } else {
     fsChip.classList.add("hidden");
   }
-
-  const metricNames = [...new Set(results.flatMap((r) => Object.keys(r.metrics || {})))];
-  const bestId = (run.best_model || {}).run_id;
-  const zebra = results.length > 15;
-  const hasCv = metric && results.some((r) => r.cv_metrics && metric in r.cv_metrics);
-
-  let html = `<tr><th>Candidate</th><th>Status</th>${metricNames.map((m) => `<th>${m}</th>`).join("")}${hasCv ? `<th>CV ${escapeHtml(metric)}</th>` : ""}</tr>`;
-  for (const r of results) {
-    const isBest = r.run_id === bestId;
-    html += `<tr class="${isBest ? "best" : ""} ${zebra ? "zebra" : ""}">
-      <td>${escapeHtml(r.candidate_name)}${isBest ? '<span class="winner-tag">★ BEST</span>' : ""}</td>
-      <td>${escapeHtml(r.status.replaceAll("_", " "))}${r.error ? errorDisclosure(r.error) : ""}</td>
-      ${metricNames.map((m) => `<td class="num">${r.metrics && m in r.metrics ? Number(r.metrics[m]).toFixed(4) : "—"}</td>`).join("")}
-      ${hasCv ? `<td class="num">${cvCell(r, metric)}</td>` : ""}
-    </tr>`;
-  }
-  $("results-table").innerHTML = html;
 }
 
 function cvCell(result, metric) {
@@ -2677,7 +2654,7 @@ $("trace-toggle-btn").addEventListener("click", async () => {
   }
 });
 
-const RUN_TABS = ["overview", "experiments", "models", "explainability", "artifacts", "logs"];
+const RUN_TABS = ["overview", "experiments", "explainability", "artifacts", "logs"];
 
 function switchRunTab(name) {
   for (const tab of RUN_TABS) {
