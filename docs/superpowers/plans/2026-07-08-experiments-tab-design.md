@@ -38,10 +38,14 @@ Overview | Data | Pipeline | Experiments | Models Compared | Explainability | Ar
   section following the same pattern as `tab-pipeline-panel` /
   `tab-models-panel`.
 - `app.js`: add `"experiments"` to `RUN_TABS` (`app.js:2376`) so
-  `switchRunTab` wires it up automatically. Render on tab activation (same
-  pattern as the existing `explainability` special-case in `switchRunTab`,
-  `app.js:2387`) rather than on every poll tick, since the underlying data
-  only changes when `training_results` changes.
+  `switchRunTab` wires it up automatically. Render unconditionally from the
+  master `render(run)` function (`app.js:1053-1103`), the same convention
+  every other tab's sections already follow (they're all cheap re-derivations
+  of the in-memory `run` object on each 1.5s poll tick, hidden via CSS when
+  their tab isn't active). This does NOT use the `explainability` tab's
+  lazy-load-on-click pattern (`app.js:2387`), since that pattern exists
+  specifically because Explainability needs an extra network call the other
+  tabs don't.
 
 ## Data mapping
 
@@ -97,7 +101,7 @@ Reuses the existing donut SVG pattern (`renderDatasetSummary`,
 | Donut | Buckets |
 |---|---|
 | By Model | trial-count share per candidate (reflects compute spent, not just candidate count) |
-| By Status | succeeded / failed / skipped, from `result.status` |
+| By Status | grouped by whatever distinct `result.status` values are present (`succeeded` / `failed` / `timed_out` / `running` / `pending` — the last two only while a run is still in progress) |
 | By Outcome | Champion / Close contender (candidate's primary metric within 2% relative of the champion's) / Trailed (beyond that) — computed vs the champion, since there's no prior-run baseline to diff against like the reference image |
 | By Compute Time | `duration_seconds` bucketed <30s / 30s–2m / >2m |
 
