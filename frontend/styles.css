@@ -516,6 +516,12 @@ select, textarea, input[type="text"], input[type="number"] {
 .fi-fill { background: var(--accent-primary); height: 100%; border-radius: 999px; }
 .fi-value { font-family: var(--font-mono); font-size: var(--text-xs); text-align: right; }
 
+/* SHAP plots (Explainability tab, Predict tab waterfall) */
+.shap-plot { margin-bottom: var(--sp-4); }
+.shap-plot img { max-width: 100%; height: auto; display: block; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); }
+.shap-plot-caption { font-size: var(--text-sm); color: var(--text-secondary); margin-top: var(--sp-2); }
+.shap-dependence-grid { display: grid; gap: var(--sp-4); grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+
 /* activity feed */
 .activity-list { list-style: none; padding: 0; display: grid; gap: 2px; font-size: var(--text-sm); }
 .activity-list li { display: flex; gap: var(--sp-2); align-items: flex-start; padding: 7px 0; border-bottom: 1px solid var(--border-subtle); }

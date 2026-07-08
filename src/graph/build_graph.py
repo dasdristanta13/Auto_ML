@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from langgraph.graph import END, StateGraph
 
+from src.agents.explainability_node import explainability_node
 from src.agents.feature_engineering_node import feature_engineering_node
 from src.agents.model_selection_node import model_selection_node
 from src.agents.report_node import report_node
@@ -73,6 +74,7 @@ def build_train_graph():
     graph.add_node("dispatch_training", nodes.dispatch_training_node)
     graph.add_node("poll_training", nodes.poll_training_node)
     graph.add_node("evaluate", nodes.evaluate_node)
+    graph.add_node("explainability", explainability_node)
     graph.add_node("report", report_node)
 
     graph.set_entry_point("apply_feature_plan")
@@ -88,7 +90,8 @@ def build_train_graph():
         routing.route_after_poll_training,
         {"evaluate": "evaluate", "poll_training": "poll_training"},
     )
-    graph.add_edge("evaluate", "report")
+    graph.add_edge("evaluate", "explainability")
+    graph.add_edge("explainability", "report")
     graph.add_edge("report", END)
     return graph.compile()
 
@@ -110,6 +113,7 @@ def build_graph():
     graph.add_node("dispatch_training", nodes.dispatch_training_node)
     graph.add_node("poll_training", nodes.poll_training_node)
     graph.add_node("evaluate", nodes.evaluate_node)
+    graph.add_node("explainability", explainability_node)
     graph.add_node("report", report_node)
 
     graph.set_entry_point("profile")
@@ -146,6 +150,7 @@ def build_graph():
         routing.route_after_poll_training,
         {"evaluate": "evaluate", "poll_training": "poll_training"},
     )
-    graph.add_edge("evaluate", "report")
+    graph.add_edge("evaluate", "explainability")
+    graph.add_edge("explainability", "report")
     graph.add_edge("report", END)
     return graph.compile()

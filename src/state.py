@@ -70,6 +70,28 @@ class FeatureImportance(BaseModel):
     importance: float
 
 
+class FeatureImpact(BaseModel):
+    feature: str
+    mean_abs_shap: float
+
+
+class ShapPlot(BaseModel):
+    title: str
+    feature: Optional[str] = None
+    image_base64: str
+    caption: Optional[str] = None
+
+
+class ExplainabilityResult(BaseModel):
+    method: Literal["tree", "linear", "kernel", "unavailable"]
+    feature_impact: list[FeatureImpact] = Field(default_factory=list)
+    narrative: Optional[str] = None
+    note: Optional[str] = None
+    summary_plot: Optional[ShapPlot] = None
+    bar_plot: Optional[ShapPlot] = None
+    dependence_plots: list[ShapPlot] = Field(default_factory=list)
+
+
 class CVMetric(BaseModel):
     mean: float
     std: float
@@ -106,7 +128,10 @@ class TuningInfo(BaseModel):
 class TrainingResult(BaseModel):
     run_id: str
     candidate_name: str
-    status: Literal["pending", "running", "succeeded", "failed"]
+    # "timed_out": poll_training's attempt cap was reached while this
+    # candidate was still pending/running (src/graph/routing.py) — its
+    # background job may still be executing, but this run stopped tracking it.
+    status: Literal["pending", "running", "succeeded", "failed", "timed_out"]
     metrics: dict[str, float] = Field(default_factory=dict)
     duration_seconds: Optional[float] = None
     error: Optional[str] = None
@@ -118,6 +143,7 @@ class TrainingResult(BaseModel):
     tuning: TuningInfo = Field(default_factory=TuningInfo)
     resampling_applied: Optional[str] = None  # "smote" | "random_oversample" | "random_undersample" | None
     resampling_note: Optional[str] = None  # explains an auto-fallback (e.g. SMOTE -> random oversampling)
+    explainability: Optional[ExplainabilityResult] = None
 
 
 class PipelineState(TypedDict, total=False):

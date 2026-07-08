@@ -158,6 +158,7 @@ let currentRunStatus = null;
 let selectedFile = null;
 let lastRun = null;
 let predictFormLoadedFor = null;
+let explainabilityLoadedFor = null;
 let currentDatasetRunId = null;
 let previewState = { page: 1, pageSize: 50, sortBy: null, sortDir: "asc", search: "" };
 let previewColumns = [];
@@ -1003,6 +1004,10 @@ function openRun(runId) {
   $("trace-details").classList.add("hidden");
   $("trace-body").textContent = "";
   predictFormLoadedFor = null;
+  explainabilityLoadedFor = null;
+  $("explainability-narrative").textContent = "";
+  $("explainability-plots").innerHTML = "";
+  $("explainability-empty").classList.add("hidden");
   $("predict-result").classList.add("hidden");
   chatPendingQuestion = null;
   $("chat-input").value = "";
@@ -1481,7 +1486,7 @@ function renderTrainProgress(run) {
     return;
   }
   box.classList.remove("hidden");
-  const finished = results.filter((r) => ["succeeded", "failed"].includes(r.status)).length;
+  const finished = results.filter((r) => ["succeeded", "failed", "timed_out"].includes(r.status)).length;
   const pct = Math.round((finished / results.length) * 100);
   const runningNames = results.filter((r) => r.status === "running").map((r) => r.candidate_name);
   $("train-progress-text").innerHTML = `
@@ -1494,11 +1499,12 @@ function renderTrainProgress(run) {
 function tuningStatusText(result) {
   const t = result.tuning || {};
   if (result.status === "pending") return "queued";
+  if (result.status === "timed_out") return "timed out — still training in the background, no longer tracked";
   if (t.note) return t.note;
   if (!t.enabled) return result.status === "running" ? "training…" : result.status;
   const last = t.history[t.history.length - 1];
   const best = last ? `best ${t.metric} ${last.best_score.toFixed(3)}` : "starting…";
-  const doneTraining = ["succeeded", "failed"].includes(result.status);
+  const doneTraining = ["succeeded", "failed", "timed_out"].includes(result.status);
   return doneTraining ? `${t.trials_done} trial(s) · ${best}` : `trial ${t.trials_done} of ${t.trials_total} · ${best}`;
 }
 
@@ -1510,7 +1516,7 @@ function renderTuningProgress(results) {
       return `
       <div class="tuning-row">
         <span class="tuning-name" title="${escapeHtml(r.candidate_name)}">${escapeHtml(r.candidate_name)}</span>
-        <span class="tuning-track"><span class="tuning-fill ${r.status === "failed" ? "failed" : ""}" style="transform:scaleX(${Math.max(pct, 3) / 100})"></span></span>
+        <span class="tuning-track"><span class="tuning-fill ${["failed", "timed_out"].includes(r.status) ? "failed" : ""}" style="transform:scaleX(${Math.max(pct, 3) / 100})"></span></span>
         <span class="tuning-status mono small">${escapeHtml(tuningStatusText(r))}</span>
       </div>`;
     })
@@ -1589,13 +1595,18 @@ function renderReasoningRail(run) {
     section.classList.remove("hidden");
     checklist.innerHTML = results
       .map((r) => {
-        const cls = r.status === "succeeded" ? "done" : r.status === "failed" ? "failed" : r.status === "running" ? "active" : "";
+        const cls =
+          r.status === "succeeded" ? "done"
+          : r.status === "failed" || r.status === "timed_out" ? "failed"
+          : r.status === "running" ? "active"
+          : "";
         const icon =
           r.status === "succeeded" ? ICONS.check
-          : r.status === "failed" ? ICONS.error
+          : r.status === "failed" || r.status === "timed_out" ? ICONS.error
           : r.status === "running" ? '<span class="stage-spinner"></span>'
           : ICONS.clock;
-        return `<li class="${cls}">${icon}<span>${escapeHtml(r.candidate_name)}</span></li>`;
+        const label = r.status === "timed_out" ? `${r.candidate_name} — timed out` : r.candidate_name;
+        return `<li class="${cls}">${icon}<span>${escapeHtml(label)}</span></li>`;
       })
       .join("");
   } else if (retry) {
@@ -2058,7 +2069,7 @@ function renderResults(run) {
     const isBest = r.run_id === bestId;
     html += `<tr class="${isBest ? "best" : ""} ${zebra ? "zebra" : ""}">
       <td>${escapeHtml(r.candidate_name)}${isBest ? '<span class="winner-tag">★ BEST</span>' : ""}</td>
-      <td>${r.status}${r.error ? errorDisclosure(r.error) : ""}</td>
+      <td>${escapeHtml(r.status.replaceAll("_", " "))}${r.error ? errorDisclosure(r.error) : ""}</td>
       ${metricNames.map((m) => `<td class="num">${r.metrics && m in r.metrics ? Number(r.metrics[m]).toFixed(4) : "—"}</td>`).join("")}
       ${hasCv ? `<td class="num">${cvCell(r, metric)}</td>` : ""}
     </tr>`;
@@ -2236,6 +2247,65 @@ function renderFeatureImportance(run) {
     .join("");
 }
 
+async function loadExplainabilityTab(run) {
+  if (!(run.best_model || {}).model_path) {
+    $("explainability-narrative").textContent = "";
+    $("explainability-plots").innerHTML = "";
+    $("explainability-empty").textContent = "No trained model is available for this run yet.";
+    $("explainability-empty").classList.remove("hidden");
+    return;
+  }
+  if (explainabilityLoadedFor === run.run_id) return;
+  explainabilityLoadedFor = run.run_id;
+
+  $("explainability-narrative").textContent = "";
+  $("explainability-plots").innerHTML = "";
+  $("explainability-empty").textContent = "Loading explainability data…";
+  $("explainability-empty").classList.remove("hidden");
+
+  try {
+    const data = await (await authFetch(`/api/runs/${run.run_id}/explainability`)).json();
+    renderExplainability(data);
+  } catch {
+    $("explainability-empty").textContent = "Could not load explainability data for this run.";
+    $("explainability-empty").classList.remove("hidden");
+    explainabilityLoadedFor = null;
+  }
+}
+
+function renderShapPlot(plot) {
+  return `
+    <div class="shap-plot">
+      <img src="data:image/png;base64,${plot.image_base64}" alt="${escapeHtml(plot.title)}" />
+      ${plot.caption ? `<p class="shap-plot-caption">${escapeHtml(plot.caption)}</p>` : ""}
+    </div>`;
+}
+
+function renderExplainability(data) {
+  const empty = $("explainability-empty");
+  const plotsEl = $("explainability-plots");
+  const narrative = $("explainability-narrative");
+
+  const hasPlots = data.summary_plot || data.bar_plot || (data.dependence_plots && data.dependence_plots.length);
+  if (data.method === "unavailable" || !hasPlots) {
+    plotsEl.innerHTML = "";
+    narrative.textContent = "";
+    empty.textContent = data.note || "SHAP-based impact analysis isn't available for this run.";
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+  narrative.textContent = data.narrative || "";
+
+  let html = "";
+  if (data.bar_plot) html += renderShapPlot(data.bar_plot);
+  if (data.summary_plot) html += renderShapPlot(data.summary_plot);
+  if (data.dependence_plots && data.dependence_plots.length) {
+    html += `<div class="shap-dependence-grid">${data.dependence_plots.map(renderShapPlot).join("")}</div>`;
+  }
+  plotsEl.innerHTML = html;
+}
+
 /* ================= activity feed ================= */
 
 function renderActivity(run) {
@@ -2314,6 +2384,7 @@ function switchRunTab(name) {
   }
   $("run-rail").classList.toggle("hidden", name !== "overview");
   $("run-layout").classList.toggle("no-rail", name !== "overview");
+  if (name === "explainability" && lastRun) loadExplainabilityTab(lastRun);
 }
 for (const tab of RUN_TABS) {
   $(`tab-${tab}-btn`).addEventListener("click", () => switchRunTab(tab));
@@ -2384,6 +2455,9 @@ $("predict-form").addEventListener("submit", async (e) => {
   }
 });
 
+const WATERFALL_CAPTION =
+  "Each bar shows how much that feature pushed this specific prediction up or down from the model's average output. The final value (f(x)) is this row's predicted output.";
+
 function renderPredictResult(data) {
   const resultBox = $("predict-result");
   let html = `<div class="predict-headline">Prediction: ${escapeHtml(String(data.prediction))}</div>`;
@@ -2400,6 +2474,14 @@ function renderPredictResult(data) {
         </div>`
       )
       .join("");
+  }
+  if (data.waterfall_plot_base64) {
+    html += `
+      <div class="shap-plot" style="margin-top:10px">
+        <p class="muted small">Why:</p>
+        <img src="data:image/png;base64,${data.waterfall_plot_base64}" alt="Waterfall plot of this prediction's SHAP contributions" />
+        <p class="shap-plot-caption">${escapeHtml(WATERFALL_CAPTION)}</p>
+      </div>`;
   }
   resultBox.innerHTML = html;
 }

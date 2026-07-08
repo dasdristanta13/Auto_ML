@@ -12,14 +12,21 @@ Redis-backed result store in production without touching agents/graph code.
 
 from __future__ import annotations
 
+import base64
 import inspect
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Optional
 
 import joblib
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402 - backend must be set before pyplot import
 import numpy as np
 import pandas as pd
 import yaml
@@ -330,6 +337,274 @@ def _feature_importance(estimator, feature_names: list[str]) -> list[dict[str, A
     total = sum(raw) or 1.0
     ranked = sorted(zip(feature_names, raw), key=lambda pair: pair[1], reverse=True)
     return [{"feature": name, "importance": round(value / total, 4)} for name, value in ranked[:_TOP_N_FEATURE_IMPORTANCE]]
+
+
+def _explainability_config() -> dict[str, Any]:
+    with open(_RUNTIME_CONFIG_PATH, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)["explainability"]
+
+
+def _reduce_shap_values(values: np.ndarray) -> np.ndarray:
+    """Collapse a possible (samples, features, classes) SHAP output down to
+    (samples, features): binary classification keeps the positive class'
+    contribution (matching predict_one's proba[:, 1] convention elsewhere in
+    this module); anything else averages |SHAP| across classes."""
+    if values.ndim == 2:
+        return values
+    if values.shape[-1] == 2:
+        return values[:, :, 1]
+    return np.abs(values).mean(axis=2)
+
+
+def _shap_method_label(explainer) -> str:
+    name = type(explainer).__name__.lower()
+    if "tree" in name:
+        return "tree"
+    if "linear" in name:
+        return "linear"
+    return "kernel"
+
+
+def _build_shap_explainer(model, background: np.ndarray, feature_names: list[str]):
+    """Mirrors _feature_importance's own dispatch: tree ensembles
+    (feature_importances_) and linear models (coef_) get shap's fast, exact
+    Tree/Linear explainer by passing the raw estimator; anything else falls
+    back to a model-agnostic explainer over predict_proba/predict."""
+    import shap
+
+    if hasattr(model, "feature_importances_") or hasattr(model, "coef_"):
+        return shap.Explainer(model, background, feature_names=feature_names)
+    predict_fn = model.predict_proba if hasattr(model, "predict_proba") else model.predict
+    return shap.Explainer(predict_fn, background, feature_names=feature_names)
+
+
+def _shap_background(transformed_dataset_path: str, feature_columns: list[str], max_rows: int) -> pd.DataFrame:
+    df = load_dataset(transformed_dataset_path)
+    n = min(max_rows, len(df))
+    return df[feature_columns].sample(n=n, random_state=0)
+
+
+def _fig_to_base64(fig) -> str:
+    buf = BytesIO()
+    try:
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+    finally:
+        plt.close(fig)
+
+
+@contextmanager
+def _close_new_figures():
+    """Closes any matplotlib figure created inside the wrapped block, even if
+    it raises partway through — shap's plotting functions create the figure
+    early and do more work afterward, so a bare try/except around the call
+    can leak a Figure on failure. Safe to combine with _fig_to_base64's own
+    plt.close on the success path: closing an already-closed figure number
+    is a no-op for plt.get_fignums()."""
+    before = set(plt.get_fignums())
+    try:
+        yield
+    finally:
+        for num in set(plt.get_fignums()) - before:
+            plt.close(num)
+
+
+def _shap_plot_explanation(values: np.ndarray, background: np.ndarray, feature_names: list[str]):
+    """Synthetic Explanation reusing the already-reduced 2D SHAP array (no
+    second SHAP computation, no new binary/multiclass reduction logic).
+    base_values are zeroed — the aggregate plots below (beeswarm/bar/scatter)
+    show distributions, not a cumulative path, so a meaningful base value
+    isn't needed here (contrast with _render_waterfall_plot, which uses a
+    real one)."""
+    import shap
+
+    return shap.Explanation(
+        values=values,
+        base_values=np.zeros(len(values)),
+        data=background,
+        feature_names=feature_names,
+    )
+
+
+def _render_beeswarm_plot(explanation) -> Optional[dict[str, Any]]:
+    import shap
+
+    try:
+        with _close_new_figures():
+            shap.plots.beeswarm(explanation, show=False)
+            return {
+                "title": "Impact distribution (beeswarm)",
+                "feature": None,
+                "image_base64": _fig_to_base64(plt.gcf()),
+                "caption": None,
+            }
+    except Exception:  # noqa: BLE001 - one failing plot must not block the others
+        return None
+
+
+def _render_bar_plot(explanation) -> Optional[dict[str, Any]]:
+    import shap
+
+    try:
+        with _close_new_figures():
+            shap.plots.bar(explanation, show=False)
+            return {
+                "title": "Feature impact (bar)",
+                "feature": None,
+                "image_base64": _fig_to_base64(plt.gcf()),
+                "caption": None,
+            }
+    except Exception:  # noqa: BLE001 - one failing plot must not block the others
+        return None
+
+
+def _render_dependence_plots(explanation, ranked_feature_names: list[str], top_n: int) -> list[dict[str, Any]]:
+    import shap
+
+    plots: list[dict[str, Any]] = []
+    for feature_name in ranked_feature_names[:top_n]:
+        try:
+            with _close_new_figures():
+                idx = explanation.feature_names.index(feature_name)
+                shap.plots.scatter(explanation[:, idx], show=False)
+                plots.append(
+                    {
+                        "title": f"Dependence: {feature_name}",
+                        "feature": feature_name,
+                        "image_base64": _fig_to_base64(plt.gcf()),
+                        "caption": None,
+                    }
+                )
+        except Exception:  # noqa: BLE001 - one failing feature's plot must not block the others
+            continue
+    return plots
+
+
+def _reduce_shap_base_values(base_values: np.ndarray) -> np.ndarray:
+    """Mirrors _reduce_shap_values' binary/multiclass reduction, applied to
+    base_values instead of per-feature contributions, so a waterfall plot's
+    starting point matches the class its bars explain."""
+    arr = np.asarray(base_values)
+    if arr.ndim == 1:
+        return arr
+    if arr.shape[-1] == 2:
+        return arr[:, 1]
+    return arr.mean(axis=-1)
+
+
+def _render_waterfall_plot(
+    row_values: np.ndarray, base_value: float, row_data: np.ndarray, feature_names: list[str]
+) -> Optional[str]:
+    import shap
+
+    try:
+        with _close_new_figures():
+            explanation = shap.Explanation(
+                values=row_values,
+                base_values=base_value,
+                data=row_data,
+                feature_names=feature_names,
+            )
+            shap.plots.waterfall(explanation, show=False)
+            return _fig_to_base64(plt.gcf())
+    except Exception:  # noqa: BLE001 - waterfall is best-effort, contributions list is still returned
+        return None
+
+
+def compute_explainability(model_path: str, transformed_dataset_path: str) -> dict[str, Any]:
+    """Best-effort aggregate SHAP feature impact for the winning model,
+    computed once after training (explainability_node). Never raises —
+    unsupported estimators or SHAP failures degrade to method="unavailable"
+    with an explanatory note rather than failing the pipeline."""
+    try:
+        cfg = _explainability_config()
+        bundle = joblib.load(model_path)
+        fit_estimator = bundle["estimator"]
+        prep = fit_estimator.named_steps["prep"]
+        model = fit_estimator.named_steps["model"]
+        feature_names = [str(n) for n in prep.get_feature_names_out()]
+
+        sample = _shap_background(transformed_dataset_path, bundle["feature_columns"], cfg["max_background_rows"])
+        background = np.asarray(prep.transform(sample))
+
+        explainer = _build_shap_explainer(model, background, feature_names)
+        shap_values = explainer(background)
+        values = _reduce_shap_values(np.asarray(shap_values.values))
+        mean_abs = np.abs(values).mean(axis=0)
+
+        ranked = sorted(zip(feature_names, mean_abs), key=lambda pair: pair[1], reverse=True)
+        top_n = cfg["top_n_features"]
+
+        try:
+            explanation = _shap_plot_explanation(values, background, feature_names)
+            summary_plot = _render_beeswarm_plot(explanation)
+            bar_plot = _render_bar_plot(explanation)
+            dependence_plots = _render_dependence_plots(
+                explanation, [name for name, _ in ranked], cfg["dependence_plot_top_n"]
+            )
+        except Exception:  # noqa: BLE001 - a plotting failure must never blank feature_impact/method
+            summary_plot, bar_plot, dependence_plots = None, None, []
+
+        return {
+            "method": _shap_method_label(explainer),
+            "feature_impact": [
+                {"feature": name, "mean_abs_shap": round(float(value), 6)} for name, value in ranked[:top_n]
+            ],
+            "narrative": None,
+            "note": None,
+            "summary_plot": summary_plot,
+            "bar_plot": bar_plot,
+            "dependence_plots": dependence_plots,
+        }
+    except Exception as exc:  # noqa: BLE001 - explainability is best-effort, never fatal
+        return {
+            "method": "unavailable",
+            "feature_impact": [],
+            "narrative": None,
+            "note": f"SHAP explanation unavailable for this model: {exc}",
+            "summary_plot": None,
+            "bar_plot": None,
+            "dependence_plots": [],
+        }
+
+
+def explain_prediction(
+    model_path: str, values: dict[str, Any], transformed_dataset_path: str
+) -> Optional[dict[str, Any]]:
+    """Best-effort per-row SHAP contribution (+ waterfall plot) for a single
+    user-submitted prediction row, computed on demand (POST /predict).
+    Returns None rather than raising when SHAP can't explain this
+    estimator/input; on success returns {"contributions": [...],
+    "waterfall_plot_base64": Optional[str]}."""
+    try:
+        cfg = _explainability_config()
+        bundle = joblib.load(model_path)
+        fit_estimator = bundle["estimator"]
+        prep = fit_estimator.named_steps["prep"]
+        model = fit_estimator.named_steps["model"]
+        feature_columns = bundle["feature_columns"]
+        feature_names = [str(n) for n in prep.get_feature_names_out()]
+
+        sample = _shap_background(transformed_dataset_path, feature_columns, cfg["max_background_rows"])
+        background = np.asarray(prep.transform(sample))
+
+        row = pd.DataFrame([{col: values.get(col, np.nan) for col in feature_columns}])
+        row_transformed = np.asarray(prep.transform(row))
+
+        explainer = _build_shap_explainer(model, background, feature_names)
+        shap_values = explainer(row_transformed)
+        row_values = _reduce_shap_values(np.asarray(shap_values.values))[0]
+        row_base_value = _reduce_shap_base_values(np.asarray(shap_values.base_values))[0]
+        row_data = row_transformed[0]
+
+        ranked = sorted(zip(feature_names, row_values), key=lambda pair: abs(pair[1]), reverse=True)
+        top_n = cfg["top_n_features"]
+        contributions = [{"feature": name, "shap_value": round(float(value), 6)} for name, value in ranked[:top_n]]
+        waterfall_plot_base64 = _render_waterfall_plot(row_values, float(row_base_value), row_data, feature_names)
+
+        return {"contributions": contributions, "waterfall_plot_base64": waterfall_plot_base64}
+    except Exception:  # noqa: BLE001 - per-row explanation is best-effort
+        return None
 
 
 def _evaluate(task_type: str, y_test: pd.Series, y_pred, y_proba=None) -> dict[str, float]:

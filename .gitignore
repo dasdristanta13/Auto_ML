@@ -25,3 +25,4 @@ tests/fixtures/*.csv
 # local worktree scratch directories (superpowers:using-git-worktrees)
 .worktrees/
 worktrees/
+.superpowers/
