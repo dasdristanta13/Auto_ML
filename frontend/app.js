@@ -2068,7 +2068,7 @@ function renderExperimentsBarChart(run) {
   const sorted = [...withMetric].sort((a, b) =>
     lowerIsBetter ? a.metrics[metric] - b.metrics[metric] : b.metrics[metric] - a.metrics[metric]
   );
-  $("exp-bar-sub").textContent = `ranked by ${metric}`;
+  $("exp-bar-sub").textContent = `ranked by ${metric} (held-out)`;
 
   const values = sorted.map((r) => Number(r.metrics[metric]));
   const allUnitRange = values.every((v) => v >= 0 && v <= 1);
