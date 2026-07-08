@@ -379,6 +379,16 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   .stage:not(:first-child)::before { display: none; }
 }
 
+.stage-tracker.compact { gap: 2px; padding-bottom: 0; }
+.stage-tracker.compact .stage { min-width: 0; gap: 4px; }
+.stage-tracker.compact .stage-dot { width: 26px; height: 26px; }
+.stage-tracker.compact .stage-dot svg { width: 12px; height: 12px; }
+.stage-tracker.compact .stage-label { font-size: 10px; }
+.stage-tracker.compact .stage-status,
+.stage-tracker.compact .stage-time,
+.stage-tracker.compact .stage-retry { display: none; }
+.stage-tracker.compact .stage:not(:first-child)::before { top: 13px; }
+
 /* training sub-progress */
 .train-progress { margin-top: var(--sp-3); padding: var(--sp-3); background: var(--bg-surface-raised); border-radius: var(--radius-sm); }
 .train-progress-text { font-size: var(--text-sm); margin-bottom: var(--sp-2); display: flex; justify-content: space-between; gap: var(--sp-2); flex-wrap: wrap; }

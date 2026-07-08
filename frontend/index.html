@@ -189,7 +189,6 @@
       <div class="tab-bar run-tab-bar" role="tablist">
         <button class="tab-btn active" id="tab-overview-btn" type="button" role="tab" aria-selected="true">Overview</button>
         <button class="tab-btn" id="tab-data-btn" type="button" role="tab" aria-selected="false">Data</button>
-        <button class="tab-btn" id="tab-pipeline-btn" type="button" role="tab" aria-selected="false">Pipeline</button>
         <button class="tab-btn" id="tab-experiments-btn" type="button" role="tab" aria-selected="false">Experiments</button>
         <button class="tab-btn" id="tab-models-btn" type="button" role="tab" aria-selected="false">Models Compared</button>
         <button class="tab-btn" id="tab-explainability-btn" type="button" role="tab" aria-selected="false">Explainability</button>
@@ -453,22 +452,6 @@
 
       </div><!-- /tab-overview-panel -->
 
-      <div id="tab-pipeline-panel" class="hidden">
-        <!-- live pipeline -->
-        <section class="card">
-          <div class="card-head">
-            <h3>Pipeline stages</h3>
-            <span class="muted small" id="pipeline-sub"></span>
-          </div>
-          <ol class="stage-tracker" id="stage-tracker"></ol>
-          <div class="train-progress hidden" id="train-progress">
-            <div class="train-progress-text" id="train-progress-text"></div>
-            <div class="train-progress-track"><div class="train-progress-fill" id="train-progress-fill"></div></div>
-            <div class="tuning-progress-list" id="tuning-progress-list"></div>
-          </div>
-        </section>
-      </div><!-- /tab-pipeline-panel -->
-
       <div id="tab-models-panel" class="hidden">
         <section class="dash-grid">
           <div class="card hidden" id="results-card">
@@ -487,6 +470,18 @@
       </div><!-- /tab-models-panel -->
 
       <div id="tab-experiments-panel" class="hidden">
+        <section class="card">
+          <div class="card-head">
+            <h3>Pipeline stages</h3>
+            <span class="muted small" id="pipeline-sub"></span>
+          </div>
+          <ol class="stage-tracker" id="stage-tracker"></ol>
+          <div class="train-progress hidden" id="train-progress">
+            <div class="train-progress-text" id="train-progress-text"></div>
+            <div class="train-progress-track"><div class="train-progress-fill" id="train-progress-fill"></div></div>
+            <div class="tuning-progress-list" id="tuning-progress-list"></div>
+          </div>
+        </section>
         <div class="experiments-layout">
           <div class="experiments-main">
             <section class="stat-row" id="exp-stat-cards"></section>

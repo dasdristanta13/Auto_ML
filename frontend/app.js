@@ -1179,7 +1179,7 @@ function renderJourneyCondensed(run) {
   }).join("");
 }
 
-$("journey-view-pipeline-btn").addEventListener("click", () => switchRunTab("pipeline"));
+$("journey-view-pipeline-btn").addEventListener("click", () => switchRunTab("experiments"));
 
 $("nextstep-compare-btn").addEventListener("click", () => switchRunTab("models"));
 $("nextstep-artifacts-btn").addEventListener("click", () => switchRunTab("artifacts"));
@@ -1422,6 +1422,7 @@ function renderStageTracker(run) {
   const tracker = $("stage-tracker");
   tracker.innerHTML = "";
   const terminal = ["completed", "failed", "cancelled"].includes(run.status);
+  tracker.classList.toggle("compact", terminal);
   $("pipeline-sub").textContent = terminal
     ? `finished in ${formatDuration(run.elapsed_seconds)}`
     : run.status === "awaiting_confirmation"
@@ -2676,7 +2677,7 @@ $("trace-toggle-btn").addEventListener("click", async () => {
   }
 });
 
-const RUN_TABS = ["overview", "pipeline", "experiments", "models", "explainability", "artifacts", "logs"];
+const RUN_TABS = ["overview", "experiments", "models", "explainability", "artifacts", "logs"];
 
 function switchRunTab(name) {
   for (const tab of RUN_TABS) {
