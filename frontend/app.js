@@ -1006,7 +1006,7 @@ function openRun(runId) {
   predictFormLoadedFor = null;
   explainabilityLoadedFor = null;
   $("explainability-narrative").textContent = "";
-  $("explainability-list").innerHTML = "";
+  $("explainability-plots").innerHTML = "";
   $("explainability-empty").classList.add("hidden");
   $("predict-result").classList.add("hidden");
   chatPendingQuestion = null;
@@ -2250,7 +2250,7 @@ function renderFeatureImportance(run) {
 async function loadExplainabilityTab(run) {
   if (!(run.best_model || {}).model_path) {
     $("explainability-narrative").textContent = "";
-    $("explainability-list").innerHTML = "";
+    $("explainability-plots").innerHTML = "";
     $("explainability-empty").textContent = "No trained model is available for this run yet.";
     $("explainability-empty").classList.remove("hidden");
     return;
@@ -2259,7 +2259,7 @@ async function loadExplainabilityTab(run) {
   explainabilityLoadedFor = run.run_id;
 
   $("explainability-narrative").textContent = "";
-  $("explainability-list").innerHTML = "";
+  $("explainability-plots").innerHTML = "";
   $("explainability-empty").textContent = "Loading explainability data…";
   $("explainability-empty").classList.remove("hidden");
 
@@ -2273,13 +2273,22 @@ async function loadExplainabilityTab(run) {
   }
 }
 
+function renderShapPlot(plot) {
+  return `
+    <div class="shap-plot">
+      <img src="data:image/png;base64,${plot.image_base64}" alt="${escapeHtml(plot.title)}" />
+      ${plot.caption ? `<p class="shap-plot-caption">${escapeHtml(plot.caption)}</p>` : ""}
+    </div>`;
+}
+
 function renderExplainability(data) {
   const empty = $("explainability-empty");
-  const list = $("explainability-list");
+  const plotsEl = $("explainability-plots");
   const narrative = $("explainability-narrative");
 
-  if (data.method === "unavailable" || !data.feature_impact || !data.feature_impact.length) {
-    list.innerHTML = "";
+  const hasPlots = data.summary_plot || data.bar_plot || (data.dependence_plots && data.dependence_plots.length);
+  if (data.method === "unavailable" || !hasPlots) {
+    plotsEl.innerHTML = "";
     narrative.textContent = "";
     empty.textContent = data.note || "SHAP-based impact analysis isn't available for this run.";
     empty.classList.remove("hidden");
@@ -2288,17 +2297,13 @@ function renderExplainability(data) {
   empty.classList.add("hidden");
   narrative.textContent = data.narrative || "";
 
-  const max = Math.max(...data.feature_impact.map((f) => f.mean_abs_shap), 0.0001);
-  list.innerHTML = data.feature_impact
-    .map(
-      (f) => `
-      <div class="fi-row">
-        <span class="fi-name" title="${escapeHtml(f.feature)}">${escapeHtml(f.feature)}</span>
-        <span class="fi-track"><span class="fi-fill" style="width:${((f.mean_abs_shap / max) * 100).toFixed(1)}%"></span></span>
-        <span class="fi-value">${f.mean_abs_shap.toFixed(3)}</span>
-      </div>`
-    )
-    .join("");
+  let html = "";
+  if (data.bar_plot) html += renderShapPlot(data.bar_plot);
+  if (data.summary_plot) html += renderShapPlot(data.summary_plot);
+  if (data.dependence_plots && data.dependence_plots.length) {
+    html += `<div class="shap-dependence-grid">${data.dependence_plots.map(renderShapPlot).join("")}</div>`;
+  }
+  plotsEl.innerHTML = html;
 }
 
 /* ================= activity feed ================= */
@@ -2450,6 +2455,9 @@ $("predict-form").addEventListener("submit", async (e) => {
   }
 });
 
+const WATERFALL_CAPTION =
+  "Each bar shows how much that feature pushed this specific prediction up or down from the model's average output. The final value (f(x)) is this row's predicted output.";
+
 function renderPredictResult(data) {
   const resultBox = $("predict-result");
   let html = `<div class="predict-headline">Prediction: ${escapeHtml(String(data.prediction))}</div>`;
@@ -2467,19 +2475,13 @@ function renderPredictResult(data) {
       )
       .join("");
   }
-  if (data.contributions && data.contributions.length) {
-    const maxAbs = Math.max(...data.contributions.map((c) => Math.abs(c.shap_value)), 0.0001);
-    html += `<p class="muted small" style="margin-top:10px">Why:</p>`;
-    html += data.contributions
-      .map(
-        (c) => `
-        <div class="predict-proba-row">
-          <span>${escapeHtml(c.feature)}</span>
-          <span class="fi-track"><span class="fi-fill" style="width:${((Math.abs(c.shap_value) / maxAbs) * 100).toFixed(1)}%"></span></span>
-          <span class="mono">${c.shap_value >= 0 ? "+" : ""}${c.shap_value.toFixed(3)}</span>
-        </div>`
-      )
-      .join("");
+  if (data.waterfall_plot_base64) {
+    html += `
+      <div class="shap-plot" style="margin-top:10px">
+        <p class="muted small">Why:</p>
+        <img src="data:image/png;base64,${data.waterfall_plot_base64}" alt="Waterfall plot of this prediction's SHAP contributions" />
+        <p class="shap-plot-caption">${escapeHtml(WATERFALL_CAPTION)}</p>
+      </div>`;
   }
   resultBox.innerHTML = html;
 }
