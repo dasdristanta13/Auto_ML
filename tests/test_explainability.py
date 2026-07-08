@@ -17,6 +17,7 @@ from src.training.dispatch import (
     _reduce_shap_base_values,
     _reduce_shap_values,
     _registry,
+    _render_beeswarm_plot,
     _render_dependence_plots,
     _run_job,
     _shap_method_label,
@@ -194,3 +195,22 @@ def test_render_dependence_plots_skips_unknown_feature_without_raising():
     )
     plots = _render_dependence_plots(explanation, ["a", "does-not-exist", "b"], 3)
     assert {p["feature"] for p in plots} == {"a", "b"}
+
+
+def test_render_beeswarm_plot_closes_figure_on_failure(monkeypatch):
+    import matplotlib.pyplot as plt
+    import shap
+
+    def _boom(explanation, show=False):
+        plt.figure()
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(shap.plots, "beeswarm", _boom)
+    before = set(plt.get_fignums())
+
+    explanation = _shap_plot_explanation(
+        np.array([[1.0, 2.0], [3.0, 4.0]]), np.array([[0.1, 0.2], [0.3, 0.4]]), ["a", "b"]
+    )
+    result = _render_beeswarm_plot(explanation)
+    assert result is None
+    assert set(plt.get_fignums()) == before

@@ -17,6 +17,7 @@ import inspect
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Optional
@@ -392,6 +393,22 @@ def _fig_to_base64(fig) -> str:
         plt.close(fig)
 
 
+@contextmanager
+def _close_new_figures():
+    """Closes any matplotlib figure created inside the wrapped block, even if
+    it raises partway through — shap's plotting functions create the figure
+    early and do more work afterward, so a bare try/except around the call
+    can leak a Figure on failure. Safe to combine with _fig_to_base64's own
+    plt.close on the success path: closing an already-closed figure number
+    is a no-op for plt.get_fignums()."""
+    before = set(plt.get_fignums())
+    try:
+        yield
+    finally:
+        for num in set(plt.get_fignums()) - before:
+            plt.close(num)
+
+
 def _shap_plot_explanation(values: np.ndarray, background: np.ndarray, feature_names: list[str]):
     """Synthetic Explanation reusing the already-reduced 2D SHAP array (no
     second SHAP computation, no new binary/multiclass reduction logic).
@@ -413,13 +430,14 @@ def _render_beeswarm_plot(explanation) -> Optional[dict[str, Any]]:
     import shap
 
     try:
-        shap.plots.beeswarm(explanation, show=False)
-        return {
-            "title": "Impact distribution (beeswarm)",
-            "feature": None,
-            "image_base64": _fig_to_base64(plt.gcf()),
-            "caption": None,
-        }
+        with _close_new_figures():
+            shap.plots.beeswarm(explanation, show=False)
+            return {
+                "title": "Impact distribution (beeswarm)",
+                "feature": None,
+                "image_base64": _fig_to_base64(plt.gcf()),
+                "caption": None,
+            }
     except Exception:  # noqa: BLE001 - one failing plot must not block the others
         return None
 
@@ -428,13 +446,14 @@ def _render_bar_plot(explanation) -> Optional[dict[str, Any]]:
     import shap
 
     try:
-        shap.plots.bar(explanation, show=False)
-        return {
-            "title": "Feature impact (bar)",
-            "feature": None,
-            "image_base64": _fig_to_base64(plt.gcf()),
-            "caption": None,
-        }
+        with _close_new_figures():
+            shap.plots.bar(explanation, show=False)
+            return {
+                "title": "Feature impact (bar)",
+                "feature": None,
+                "image_base64": _fig_to_base64(plt.gcf()),
+                "caption": None,
+            }
     except Exception:  # noqa: BLE001 - one failing plot must not block the others
         return None
 
@@ -445,16 +464,17 @@ def _render_dependence_plots(explanation, ranked_feature_names: list[str], top_n
     plots: list[dict[str, Any]] = []
     for feature_name in ranked_feature_names[:top_n]:
         try:
-            idx = explanation.feature_names.index(feature_name)
-            shap.plots.scatter(explanation[:, idx], show=False)
-            plots.append(
-                {
-                    "title": f"Dependence: {feature_name}",
-                    "feature": feature_name,
-                    "image_base64": _fig_to_base64(plt.gcf()),
-                    "caption": None,
-                }
-            )
+            with _close_new_figures():
+                idx = explanation.feature_names.index(feature_name)
+                shap.plots.scatter(explanation[:, idx], show=False)
+                plots.append(
+                    {
+                        "title": f"Dependence: {feature_name}",
+                        "feature": feature_name,
+                        "image_base64": _fig_to_base64(plt.gcf()),
+                        "caption": None,
+                    }
+                )
         except Exception:  # noqa: BLE001 - one failing feature's plot must not block the others
             continue
     return plots
@@ -478,14 +498,15 @@ def _render_waterfall_plot(
     import shap
 
     try:
-        explanation = shap.Explanation(
-            values=row_values,
-            base_values=base_value,
-            data=row_data,
-            feature_names=feature_names,
-        )
-        shap.plots.waterfall(explanation, show=False)
-        return _fig_to_base64(plt.gcf())
+        with _close_new_figures():
+            explanation = shap.Explanation(
+                values=row_values,
+                base_values=base_value,
+                data=row_data,
+                feature_names=feature_names,
+            )
+            shap.plots.waterfall(explanation, show=False)
+            return _fig_to_base64(plt.gcf())
     except Exception:  # noqa: BLE001 - waterfall is best-effort, contributions list is still returned
         return None
 
