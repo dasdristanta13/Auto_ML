@@ -1,9 +1,12 @@
-"""Aggregate (per-run) and per-prediction SHAP-based explainability
-(docs/superpowers/specs/2026-07-07-model-explainability-design.md).
-compute_explainability/explain_prediction degrade to method="unavailable" /
-None rather than raising; they never block the pipeline or predict endpoint."""
+"""Aggregate (per-run) and per-prediction SHAP-based explainability, plus
+the SHAP plots layered on top (docs/superpowers/specs/2026-07-08-shap-plots-
+design.md). compute_explainability/explain_prediction degrade to
+method="unavailable" / None rather than raising; a single plot's failure
+must never block the other plots or blank out feature_impact."""
 
 from __future__ import annotations
+
+import base64
 
 import numpy as np
 import pandas as pd
@@ -11,13 +14,18 @@ import pytest
 
 from src.training.dispatch import (
     _build_shap_explainer,
+    _reduce_shap_base_values,
     _reduce_shap_values,
     _registry,
+    _render_dependence_plots,
     _run_job,
     _shap_method_label,
+    _shap_plot_explanation,
     compute_explainability,
     explain_prediction,
 )
+
+_PNG_HEADER = b"\x89PNG"
 
 
 def _train(tag: str, dataset_path, estimator: str, hyperparams: dict) -> dict:
@@ -89,14 +97,53 @@ def test_compute_explainability_never_raises_on_missing_artifact(tmp_path):
     assert result["method"] == "unavailable"
     assert result["feature_impact"] == []
     assert "SHAP explanation unavailable" in result["note"]
+    assert result["summary_plot"] is None
+    assert result["bar_plot"] is None
+    assert result["dependence_plots"] == []
+
+
+def test_compute_explainability_includes_plots(trained_tree_model):
+    model_path, dataset_path = trained_tree_model
+    result = compute_explainability(model_path, dataset_path)
+
+    assert result["summary_plot"] is not None
+    assert base64.b64decode(result["summary_plot"]["image_base64"])[:4] == _PNG_HEADER
+    assert result["bar_plot"] is not None
+    assert base64.b64decode(result["bar_plot"]["image_base64"])[:4] == _PNG_HEADER
+    assert 1 <= len(result["dependence_plots"]) <= 3
+    for plot in result["dependence_plots"]:
+        assert plot["feature"] in {"x1", "x2", "x3"}
+        assert base64.b64decode(plot["image_base64"])[:4] == _PNG_HEADER
+
+
+def test_compute_explainability_caps_dependence_plots_to_config(tmp_path):
+    rng = np.random.default_rng(5)
+    n = 150
+    data = {f"f{i}": rng.random(n) for i in range(12)}
+    data["target"] = rng.integers(0, 2, n)
+    dataset_path = tmp_path / "wide-plots.csv"
+    pd.DataFrame(data).to_csv(dataset_path, index=False)
+    result = _train("expl-wide-plots", dataset_path, "RandomForestClassifier", {"n_estimators": 10, "max_depth": 3, "random_state": 0})
+
+    explainability = compute_explainability(result["model_path"], str(dataset_path))
+    assert len(explainability["dependence_plots"]) == 3
 
 
 def test_explain_prediction_returns_ranked_row_contributions(trained_tree_model):
     model_path, dataset_path = trained_tree_model
-    contributions = explain_prediction(model_path, {"x1": 0.9, "x2": 0.1, "x3": 0.5}, dataset_path)
-    assert contributions is not None
+    result = explain_prediction(model_path, {"x1": 0.9, "x2": 0.1, "x3": 0.5}, dataset_path)
+    assert result is not None
+    contributions = result["contributions"]
     assert 1 <= len(contributions) <= 8
     assert {c["feature"] for c in contributions} <= {"x1", "x2", "x3"}
+
+
+def test_explain_prediction_returns_waterfall_plot(trained_tree_model):
+    model_path, dataset_path = trained_tree_model
+    result = explain_prediction(model_path, {"x1": 0.9, "x2": 0.1, "x3": 0.5}, dataset_path)
+    assert result is not None
+    assert result["waterfall_plot_base64"] is not None
+    assert base64.b64decode(result["waterfall_plot_base64"])[:4] == _PNG_HEADER
 
 
 def test_explain_prediction_returns_none_on_failure(tmp_path):
@@ -118,6 +165,18 @@ def test_reduce_shap_values_averages_multiclass():
     assert reduced[0][0] == pytest.approx(2.0)
 
 
+def test_reduce_shap_base_values_keeps_positive_class_for_binary():
+    values = np.array([[1.0, 5.0], [2.0, 6.0]])
+    reduced = _reduce_shap_base_values(values)
+    assert list(reduced) == [5.0, 6.0]
+
+
+def test_reduce_shap_base_values_passes_through_1d():
+    values = np.array([1.0, 2.0, 3.0])
+    reduced = _reduce_shap_base_values(values)
+    assert list(reduced) == [1.0, 2.0, 3.0]
+
+
 def test_shap_method_label_falls_back_to_kernel_for_unsupported_estimator():
     from sklearn.neighbors import KNeighborsClassifier
 
@@ -127,3 +186,11 @@ def test_shap_method_label_falls_back_to_kernel_for_unsupported_estimator():
     model = KNeighborsClassifier().fit(X, y)
     explainer = _build_shap_explainer(model, X[:20], ["a", "b", "c"])
     assert _shap_method_label(explainer) == "kernel"
+
+
+def test_render_dependence_plots_skips_unknown_feature_without_raising():
+    explanation = _shap_plot_explanation(
+        np.array([[1.0, 2.0], [3.0, 4.0]]), np.array([[0.1, 0.2], [0.3, 0.4]]), ["a", "b"]
+    )
+    plots = _render_dependence_plots(explanation, ["a", "does-not-exist", "b"], 3)
+    assert {p["feature"] for p in plots} == {"a", "b"}

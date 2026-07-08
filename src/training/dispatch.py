@@ -12,14 +12,20 @@ Redis-backed result store in production without touching agents/graph code.
 
 from __future__ import annotations
 
+import base64
 import inspect
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Optional
 
 import joblib
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402 - backend must be set before pyplot import
 import numpy as np
 import pandas as pd
 import yaml
@@ -377,6 +383,113 @@ def _shap_background(transformed_dataset_path: str, feature_columns: list[str], 
     return df[feature_columns].sample(n=n, random_state=0)
 
 
+def _fig_to_base64(fig) -> str:
+    buf = BytesIO()
+    try:
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+    finally:
+        plt.close(fig)
+
+
+def _shap_plot_explanation(values: np.ndarray, background: np.ndarray, feature_names: list[str]):
+    """Synthetic Explanation reusing the already-reduced 2D SHAP array (no
+    second SHAP computation, no new binary/multiclass reduction logic).
+    base_values are zeroed — the aggregate plots below (beeswarm/bar/scatter)
+    show distributions, not a cumulative path, so a meaningful base value
+    isn't needed here (contrast with _render_waterfall_plot, which uses a
+    real one)."""
+    import shap
+
+    return shap.Explanation(
+        values=values,
+        base_values=np.zeros(len(values)),
+        data=background,
+        feature_names=feature_names,
+    )
+
+
+def _render_beeswarm_plot(explanation) -> Optional[dict[str, Any]]:
+    import shap
+
+    try:
+        shap.plots.beeswarm(explanation, show=False)
+        return {
+            "title": "Impact distribution (beeswarm)",
+            "feature": None,
+            "image_base64": _fig_to_base64(plt.gcf()),
+            "caption": None,
+        }
+    except Exception:  # noqa: BLE001 - one failing plot must not block the others
+        return None
+
+
+def _render_bar_plot(explanation) -> Optional[dict[str, Any]]:
+    import shap
+
+    try:
+        shap.plots.bar(explanation, show=False)
+        return {
+            "title": "Feature impact (bar)",
+            "feature": None,
+            "image_base64": _fig_to_base64(plt.gcf()),
+            "caption": None,
+        }
+    except Exception:  # noqa: BLE001 - one failing plot must not block the others
+        return None
+
+
+def _render_dependence_plots(explanation, ranked_feature_names: list[str], top_n: int) -> list[dict[str, Any]]:
+    import shap
+
+    plots: list[dict[str, Any]] = []
+    for feature_name in ranked_feature_names[:top_n]:
+        try:
+            idx = explanation.feature_names.index(feature_name)
+            shap.plots.scatter(explanation[:, idx], show=False)
+            plots.append(
+                {
+                    "title": f"Dependence: {feature_name}",
+                    "feature": feature_name,
+                    "image_base64": _fig_to_base64(plt.gcf()),
+                    "caption": None,
+                }
+            )
+        except Exception:  # noqa: BLE001 - one failing feature's plot must not block the others
+            continue
+    return plots
+
+
+def _reduce_shap_base_values(base_values: np.ndarray) -> np.ndarray:
+    """Mirrors _reduce_shap_values' binary/multiclass reduction, applied to
+    base_values instead of per-feature contributions, so a waterfall plot's
+    starting point matches the class its bars explain."""
+    arr = np.asarray(base_values)
+    if arr.ndim == 1:
+        return arr
+    if arr.shape[-1] == 2:
+        return arr[:, 1]
+    return arr.mean(axis=-1)
+
+
+def _render_waterfall_plot(
+    row_values: np.ndarray, base_value: float, row_data: np.ndarray, feature_names: list[str]
+) -> Optional[str]:
+    import shap
+
+    try:
+        explanation = shap.Explanation(
+            values=row_values,
+            base_values=base_value,
+            data=row_data,
+            feature_names=feature_names,
+        )
+        shap.plots.waterfall(explanation, show=False)
+        return _fig_to_base64(plt.gcf())
+    except Exception:  # noqa: BLE001 - waterfall is best-effort, contributions list is still returned
+        return None
+
+
 def compute_explainability(model_path: str, transformed_dataset_path: str) -> dict[str, Any]:
     """Best-effort aggregate SHAP feature impact for the winning model,
     computed once after training (explainability_node). Never raises —
@@ -400,6 +513,14 @@ def compute_explainability(model_path: str, transformed_dataset_path: str) -> di
 
         ranked = sorted(zip(feature_names, mean_abs), key=lambda pair: pair[1], reverse=True)
         top_n = cfg["top_n_features"]
+
+        explanation = _shap_plot_explanation(values, background, feature_names)
+        summary_plot = _render_beeswarm_plot(explanation)
+        bar_plot = _render_bar_plot(explanation)
+        dependence_plots = _render_dependence_plots(
+            explanation, [name for name, _ in ranked], cfg["dependence_plot_top_n"]
+        )
+
         return {
             "method": _shap_method_label(explainer),
             "feature_impact": [
@@ -407,6 +528,9 @@ def compute_explainability(model_path: str, transformed_dataset_path: str) -> di
             ],
             "narrative": None,
             "note": None,
+            "summary_plot": summary_plot,
+            "bar_plot": bar_plot,
+            "dependence_plots": dependence_plots,
         }
     except Exception as exc:  # noqa: BLE001 - explainability is best-effort, never fatal
         return {
@@ -414,13 +538,20 @@ def compute_explainability(model_path: str, transformed_dataset_path: str) -> di
             "feature_impact": [],
             "narrative": None,
             "note": f"SHAP explanation unavailable for this model: {exc}",
+            "summary_plot": None,
+            "bar_plot": None,
+            "dependence_plots": [],
         }
 
 
-def explain_prediction(model_path: str, values: dict[str, Any], transformed_dataset_path: str) -> Optional[list[dict[str, Any]]]:
-    """Best-effort per-row SHAP contribution for a single user-submitted
-    prediction row, computed on demand (POST /predict). Returns None rather
-    than raising when SHAP can't explain this estimator/input."""
+def explain_prediction(
+    model_path: str, values: dict[str, Any], transformed_dataset_path: str
+) -> Optional[dict[str, Any]]:
+    """Best-effort per-row SHAP contribution (+ waterfall plot) for a single
+    user-submitted prediction row, computed on demand (POST /predict).
+    Returns None rather than raising when SHAP can't explain this
+    estimator/input; on success returns {"contributions": [...],
+    "waterfall_plot_base64": Optional[str]}."""
     try:
         cfg = _explainability_config()
         bundle = joblib.load(model_path)
@@ -439,10 +570,15 @@ def explain_prediction(model_path: str, values: dict[str, Any], transformed_data
         explainer = _build_shap_explainer(model, background, feature_names)
         shap_values = explainer(row_transformed)
         row_values = _reduce_shap_values(np.asarray(shap_values.values))[0]
+        row_base_value = _reduce_shap_base_values(np.asarray(shap_values.base_values))[0]
+        row_data = row_transformed[0]
 
         ranked = sorted(zip(feature_names, row_values), key=lambda pair: abs(pair[1]), reverse=True)
         top_n = cfg["top_n_features"]
-        return [{"feature": name, "shap_value": round(float(value), 6)} for name, value in ranked[:top_n]]
+        contributions = [{"feature": name, "shap_value": round(float(value), 6)} for name, value in ranked[:top_n]]
+        waterfall_plot_base64 = _render_waterfall_plot(row_values, float(row_base_value), row_data, feature_names)
+
+        return {"contributions": contributions, "waterfall_plot_base64": waterfall_plot_base64}
     except Exception:  # noqa: BLE001 - per-row explanation is best-effort
         return None
 

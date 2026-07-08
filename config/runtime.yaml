@@ -18,6 +18,7 @@ tools:
 explainability:
   top_n_features: 8 # cap on ranked SHAP features returned/narrated
   max_background_rows: 100 # background/reference sample size for SHAP explainers
+  dependence_plot_top_n: 3 # number of top-ranked features to render dependence plots for
 
 training:
   # Local dev stand-in for Celery/Ray (see src/training/dispatch.py).

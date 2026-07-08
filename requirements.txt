@@ -24,6 +24,7 @@ litellm>=1.50.0   # only needed when config/models.yaml sets backend: litellm
 
 # reporting / explainability
 shap>=0.45.0
+matplotlib>=3.8
 
 # optional additional model libraries — when not installed, model selection
 # automatically skips these candidate families (src/agents/model_selection_node.py)

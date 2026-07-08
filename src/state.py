@@ -75,11 +75,21 @@ class FeatureImpact(BaseModel):
     mean_abs_shap: float
 
 
+class ShapPlot(BaseModel):
+    title: str
+    feature: Optional[str] = None
+    image_base64: str
+    caption: Optional[str] = None
+
+
 class ExplainabilityResult(BaseModel):
     method: Literal["tree", "linear", "kernel", "unavailable"]
     feature_impact: list[FeatureImpact] = Field(default_factory=list)
     narrative: Optional[str] = None
     note: Optional[str] = None
+    summary_plot: Optional[ShapPlot] = None
+    bar_plot: Optional[ShapPlot] = None
+    dependence_plots: list[ShapPlot] = Field(default_factory=list)
 
 
 class CVMetric(BaseModel):
