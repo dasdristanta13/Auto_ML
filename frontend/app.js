@@ -2014,6 +2014,7 @@ function renderExperimentsTab(run) {
   renderExperimentsStatCards(run);
   renderExperimentsBarChart(run);
   renderExperimentsTrend(run);
+  renderExperimentsTable(run);
 }
 
 function renderExperimentsStatCards(run) {
@@ -2235,6 +2236,45 @@ function renderExperimentsTrend(run) {
   $("exp-trend-legend").innerHTML = named
     .map((r, i) => `<li><span class="tt-chip" style="background:${palette[i % palette.length]}"></span>${escapeHtml(r.candidate_name)}${r.run_id === bestId ? " (champion)" : ""}</li>`)
     .join("") + (overflow.length ? `<li><span class="tt-chip" style="background:var(--text-secondary);opacity:0.5"></span>${overflow.length} other candidate(s)</li>` : "");
+}
+
+/* ================= experiments table ================= */
+
+function renderExperimentsTable(run) {
+  const results = run.training_results || [];
+  const metric = (run.task_spec || {}).metric;
+  const bestId = (run.best_model || {}).run_id;
+  const lowerIsBetter = metric === "rmse" || metric === "mae";
+  const metricNames = [...new Set(results.flatMap((r) => Object.keys(r.metrics || {})))];
+  const primary = metric && metricNames.includes(metric) ? metric : metricNames[0];
+  const secondary = metricNames.find((m) => m !== primary);
+  const hasCv = primary && results.some((r) => r.cv_metrics && primary in r.cv_metrics);
+
+  const ranked = [...results].sort((a, b) => {
+    const aHas = a.metrics && primary in (a.metrics || {}), bHas = b.metrics && primary in (b.metrics || {});
+    if (!aHas && !bHas) return 0;
+    if (!aHas) return 1;
+    if (!bHas) return -1;
+    return lowerIsBetter ? a.metrics[primary] - b.metrics[primary] : b.metrics[primary] - a.metrics[primary];
+  });
+
+  $("exp-table-sub").textContent = primary ? `${results.length} candidate(s) · ranked by ${primary}` : `${results.length} candidate(s)`;
+
+  let html = `<tr><th>Rank</th><th>Model</th><th>Trials</th>${primary ? `<th>${escapeHtml(primary)}${hasCv ? " (CV)" : ""}</th>` : ""}${secondary ? `<th>${escapeHtml(secondary)}</th>` : ""}<th>Training Time</th><th>Status</th></tr>`;
+  ranked.forEach((r, i) => {
+    const isBest = r.run_id === bestId;
+    const trials = r.tuning && r.tuning.enabled ? `${r.tuning.trials_done}/${r.tuning.trials_total}` : "no tuning";
+    html += `<tr class="${isBest ? "best" : ""}">
+      <td>${i + 1}</td>
+      <td>${escapeHtml(r.candidate_name)}${isBest ? '<span class="winner-tag">★ CHAMPION</span>' : ""}</td>
+      <td>${escapeHtml(trials)}</td>
+      ${primary ? `<td class="num">${r.metrics && primary in r.metrics ? (hasCv ? cvCell(r, primary) : Number(r.metrics[primary]).toFixed(4)) : "—"}</td>` : ""}
+      ${secondary ? `<td class="num">${r.metrics && secondary in r.metrics ? Number(r.metrics[secondary]).toFixed(4) : "—"}</td>` : ""}
+      <td>${r.duration_seconds != null ? formatDuration(r.duration_seconds) : "—"}</td>
+      <td>${escapeHtml(r.status.replaceAll("_", " "))}${r.error ? errorDisclosure(r.error) : ""}</td>
+    </tr>`;
+  });
+  $("exp-table").innerHTML = html;
 }
 
 /* ================= AI assistant panel ================= */
