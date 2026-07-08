@@ -97,3 +97,75 @@ def test_explainability_node_noop_when_no_model_path():
     result = explainability_node(state)
 
     assert result["best_model"] == {}
+
+
+def test_explainability_node_captions_computed_plots(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        explainability_node_module,
+        "compute_explainability",
+        lambda model_path, transformed_dataset_path: {
+            "method": "tree",
+            "feature_impact": [{"feature": "age", "mean_abs_shap": 0.4}],
+            "narrative": None,
+            "note": None,
+            "summary_plot": {"title": "Impact distribution (beeswarm)", "feature": None, "image_base64": "aaaa", "caption": None},
+            "bar_plot": {"title": "Feature impact (bar)", "feature": None, "image_base64": "bbbb", "caption": None},
+            "dependence_plots": [{"title": "Dependence: age", "feature": "age", "image_base64": "cccc", "caption": None}],
+        },
+    )
+
+    def _fake_generate(self, run_id, node, system_prompt, user_prompt, json_schema=None, retries=1):
+        if node == "explainability":
+            return "Age drives most predictions."
+        if node == "explainability_captions":
+            return {
+                "summary_plot_caption": "Each dot is a row; color shows feature value.",
+                "bar_plot_caption": "Bars rank features by average impact.",
+                "dependence_plot_captions": {"age": "Older customers push predictions higher."},
+            }
+        raise AssertionError(f"unexpected node {node}")
+
+    monkeypatch.setattr(LLMClient, "generate", _fake_generate)
+
+    state = new_state(run_id="expl-node-5", dataset_path="unused.csv", use_case_description="test")
+    state["best_model"] = {"model_path": str(tmp_path / "model.joblib")}
+
+    result = explainability_node(state)
+    explainability = result["best_model"]["explainability"]
+    assert explainability["summary_plot"]["caption"] == "Each dot is a row; color shows feature value."
+    assert explainability["bar_plot"]["caption"] == "Bars rank features by average impact."
+    assert explainability["dependence_plots"][0]["caption"] == "Older customers push predictions higher."
+
+
+def test_explainability_node_tolerates_caption_llm_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        explainability_node_module,
+        "compute_explainability",
+        lambda model_path, transformed_dataset_path: {
+            "method": "tree",
+            "feature_impact": [{"feature": "age", "mean_abs_shap": 0.4}],
+            "narrative": None,
+            "note": None,
+            "summary_plot": {"title": "Impact distribution (beeswarm)", "feature": None, "image_base64": "aaaa", "caption": None},
+            "bar_plot": None,
+            "dependence_plots": [],
+        },
+    )
+
+    def _fake_generate(self, run_id, node, system_prompt, user_prompt, json_schema=None, retries=1):
+        if node == "explainability":
+            return "Age drives most predictions."
+        if node == "explainability_captions":
+            raise RuntimeError("captions LLM down")
+        raise AssertionError(f"unexpected node {node}")
+
+    monkeypatch.setattr(LLMClient, "generate", _fake_generate)
+
+    state = new_state(run_id="expl-node-6", dataset_path="unused.csv", use_case_description="test")
+    state["best_model"] = {"model_path": str(tmp_path / "model.joblib")}
+
+    result = explainability_node(state)
+    explainability = result["best_model"]["explainability"]
+    assert explainability["summary_plot"]["image_base64"] == "aaaa"
+    assert explainability["summary_plot"]["caption"] is None
+    assert any("plot captions unavailable" in e for e in result["errors"])

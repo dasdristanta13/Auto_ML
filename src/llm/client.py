@@ -204,6 +204,18 @@ def _mock_response(node: str, system_prompt: str) -> Any:
             "In a real run, this would name the top SHAP-ranked features driving "
             "the winning model's predictions."
         )
+    if node == "explainability_captions":
+        return {
+            "summary_plot_caption": (
+                "MOCK-MODE CAPTION (AUTOML_MOCK_LLM=1) — each dot represents one row; "
+                "its position shows the feature's impact and its color the feature's value."
+            ),
+            "bar_plot_caption": (
+                "MOCK-MODE CAPTION (AUTOML_MOCK_LLM=1) — bars rank features by their "
+                "average impact on the model's predictions."
+            ),
+            "dependence_plot_captions": {},
+        }
     if node == "chat":
         return (
             "MOCK-MODE ANSWER (AUTOML_MOCK_LLM=1 — no real LLM was called). "
