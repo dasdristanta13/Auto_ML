@@ -842,14 +842,14 @@ With no console errors at any point:
 - All 4 repointed buttons/links (`journey-view-pipeline-btn`, `champion-compare-btn`, `nextstep-compare-btn`, `leaderboard-view-all-btn`) land on Experiments with no error.
 - The "Data" nav tab still navigates to the separate Dataset Detail page unchanged.
 
-- [ ] **Step 2: Edge cases**
+- [ ] **Step 3: Edge cases**
 
 Drive or fixture-simulate (via devtools console, pasting a modified run object and calling `render(...)`) these cases:
 - A run still in progress: stage tracker is NOT compact, shows live progress; Experiments tab is reachable and shows partial data without throwing.
 - A run with 0 caveats and 0 errors: `#caveats-card`/`#error-card` stay `hidden` (unaffected by the new margin rules, which only apply spacing when the elements are shown).
 - A non-classification (regression) run: `classdist-card` stays hidden in the new Data section (unchanged behavior, just relocated).
 
-- [ ] **Step 3: Final commit (only if Steps 1-2 surfaced fixes)**
+- [ ] **Step 4: Final commit (only if Steps 1-3 surfaced fixes)**
 
 ```bash
 git add frontend/index.html frontend/app.js frontend/styles.css
