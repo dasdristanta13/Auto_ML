@@ -726,6 +726,9 @@ def get_explainability(run_id: str, _session: dict[str, Any] = Depends(require_s
         "feature_impact": [],
         "narrative": None,
         "note": "explainability has not been computed for this run yet",
+        "summary_plot": None,
+        "bar_plot": None,
+        "dependence_plots": [],
     }
     return _json_safe(explainability)
 
@@ -751,7 +754,9 @@ def predict(
     except Exception as exc:  # noqa: BLE001 - surfaced as a clear 400, not a 500 stack trace
         raise HTTPException(status_code=400, detail=f"could not score this input: {exc}") from exc
     transformed_dataset_path = entry["state"].get("transformed_dataset_path", "")
-    result["contributions"] = explain_prediction(model_path, body.values, transformed_dataset_path)
+    explanation = explain_prediction(model_path, body.values, transformed_dataset_path)
+    result["contributions"] = explanation["contributions"] if explanation else None
+    result["waterfall_plot_base64"] = explanation["waterfall_plot_base64"] if explanation else None
     return _json_safe(result)
 
 
