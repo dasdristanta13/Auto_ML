@@ -2252,12 +2252,31 @@ function renderExperimentsTable(run) {
   const secondary = metricNames.find((m) => m !== primary);
   const hasCv = primary && results.some((r) => r.cv_metrics && primary in r.cv_metrics);
 
+  // Rank by the SAME value the primary column actually displays (CV mean
+  // when hasCv makes the column show cvCell's mean instead of the raw
+  // metric, else the raw metric) — sorting by the raw metric while
+  // displaying the CV mean produces a table that visibly contradicts its
+  // own "ranked by {primary}" sub-label whenever the held-out test score
+  // and the CV mean disagree on ordering (real, not hypothetical: seen on
+  // an actual pipeline run where CV-mean roc_auc for the champion was
+  // lower than two non-champion candidates' CV means, while its raw
+  // held-out score was still the highest). Found during Task 8 end-to-end
+  // verification against a real run — a fixture with raw==CV-mean by
+  // coincidence had masked this.
+  const rankValue = (r) => {
+    if (hasCv) {
+      const cv = r.cv_metrics && r.cv_metrics[primary];
+      return cv ? cv.mean : undefined;
+    }
+    return r.metrics && primary in r.metrics ? r.metrics[primary] : undefined;
+  };
   const ranked = [...results].sort((a, b) => {
-    const aHas = a.metrics && primary in (a.metrics || {}), bHas = b.metrics && primary in (b.metrics || {});
+    const aVal = rankValue(a), bVal = rankValue(b);
+    const aHas = aVal !== undefined, bHas = bVal !== undefined;
     if (!aHas && !bHas) return 0;
     if (!aHas) return 1;
     if (!bHas) return -1;
-    return lowerIsBetter ? a.metrics[primary] - b.metrics[primary] : b.metrics[primary] - a.metrics[primary];
+    return lowerIsBetter ? aVal - bVal : bVal - aVal;
   });
 
   $("exp-table-sub").textContent = primary ? `${results.length} candidate(s) · ranked by ${primary}` : `${results.length} candidate(s)`;
