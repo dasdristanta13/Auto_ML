@@ -401,7 +401,6 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .tt-line { stroke-width: 2; stroke-linejoin: round; fill: none; }
 .tt-line.champion { stroke-width: 3; }
 .tt-line.other-fold { stroke: var(--text-secondary); opacity: 0.5; }
-.tt-dot { stroke: var(--bg-surface); stroke-width: 2; }
 .tuning-legend { list-style: none; padding: 0; margin-top: var(--sp-2); display: flex; gap: var(--sp-3); font-size: var(--text-xs); color: var(--text-secondary); flex-wrap: wrap; }
 .tuning-legend li { display: flex; align-items: center; gap: 6px; }
 .tt-chip { width: 14px; height: 3px; border-radius: 2px; flex-shrink: 0; }

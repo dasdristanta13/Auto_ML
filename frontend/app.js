@@ -2168,7 +2168,6 @@ function cvCell(result, metric) {
 const EXP_TREND_COLOR_KEYS = ["--cat-1", "--cat-2", "--cat-3", "--cat-4", "--cat-5", "--cat-6", "--cat-7", "--cat-8"];
 
 function renderExperimentsTrend(run) {
-  const card = $("exp-trend-chart").closest(".card");
   const results = run.training_results || [];
   const bestId = (run.best_model || {}).run_id;
   const tuned = results.filter((r) => r.tuning && r.tuning.enabled && (r.tuning.history || []).length > 1);
@@ -2181,8 +2180,11 @@ function renderExperimentsTrend(run) {
     return;
   }
 
-  const named = tuned.slice(0, 8);
-  const overflow = tuned.slice(8);
+  // Stable partition: pull the champion (if present) to the front so it can
+  // never be pushed into the overflow fold just because of dispatch order.
+  const champFirst = [...tuned].sort((a, b) => (a.run_id === bestId ? -1 : 0) - (b.run_id === bestId ? -1 : 0));
+  const named = champFirst.slice(0, 8);
+  const overflow = champFirst.slice(8);
   $("exp-trend-sub").textContent = `best-so-far score per trial · ${tuned.length} of ${results.length} candidate(s) shown`;
 
   const styles = getComputedStyle(document.documentElement);
