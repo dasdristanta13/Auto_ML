@@ -25,6 +25,7 @@ const ICONS = {
   sparkle: '<svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9Z"/></svg>',
   shield: SVG('<path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10Z"/>'),
   bulb: SVG('<path d="M9 18h6M10 22h4M12 2a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 2Z"/>'),
+  chevron: SVG('<path d="m6 9 6 6 6-6"/>'),
 };
 
 const STAGES = [
@@ -2867,6 +2868,26 @@ function escapeHtml(str) {
   div.textContent = str ?? "";
   return div.innerHTML;
 }
+
+/* ================= collapsible rail cards ================= */
+
+function initCollapsible(cardId) {
+  const card = $(cardId);
+  const toggle = card.querySelector(".collapsible-toggle");
+  const body = card.querySelector(".card-collapsible-body");
+  const storageKey = `collapse:${cardId}`;
+  const expanded = localStorage.getItem(storageKey) === "true";
+  toggle.setAttribute("aria-expanded", String(expanded));
+  body.classList.toggle("expanded", expanded);
+  toggle.addEventListener("click", () => {
+    const next = toggle.getAttribute("aria-expanded") !== "true";
+    toggle.setAttribute("aria-expanded", String(next));
+    body.classList.toggle("expanded", next);
+    localStorage.setItem(storageKey, String(next));
+  });
+}
+initCollapsible("ai-summary-card");
+initCollapsible("activity-card");
 
 $("logout-btn").addEventListener("click", async () => {
   try {

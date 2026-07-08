@@ -977,3 +977,22 @@ select, textarea, input[type="text"], input[type="number"] {
 .exp-best-row:last-child { border-bottom: none; }
 .exp-best-row .label { color: var(--text-secondary); }
 .exp-best-row .value { font-family: var(--font-mono); font-weight: 600; text-align: right; }
+
+/* ================= collapsible cards ================= */
+
+.collapsible-toggle {
+  all: unset; display: flex; justify-content: space-between; align-items: center;
+  width: 100%; cursor: pointer; gap: var(--sp-2); box-sizing: border-box;
+}
+.collapsible-toggle:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; border-radius: var(--radius-sm); }
+.collapsible-chevron { display: inline-flex; flex-shrink: 0; transition: transform 0.2s ease; }
+.collapsible-chevron svg { width: 16px; height: 16px; }
+.collapsible-toggle[aria-expanded="true"] .collapsible-chevron { transform: rotate(180deg); }
+
+.card-collapsible-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.2s ease; }
+.card-collapsible-body.expanded { grid-template-rows: 1fr; margin-top: var(--sp-3); }
+.card-collapsible-inner { overflow: hidden; min-height: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .collapsible-chevron, .card-collapsible-body { transition: none; }
+}

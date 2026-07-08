@@ -584,10 +584,19 @@
       </div><!-- /run-main -->
 
       <aside class="run-rail" id="run-rail">
-        <div class="card hidden ai-summary-card" id="ai-summary-card">
-          <div class="card-head"><h3><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9Z"/></svg> AI Summary</h3></div>
-          <div id="report-lede" class="report-lede hidden"></div>
-          <div id="report-body" class="report-body"></div>
+        <div class="card hidden ai-summary-card collapsible-card" id="ai-summary-card">
+          <div class="card-head">
+            <button type="button" class="collapsible-toggle" id="ai-summary-toggle" aria-expanded="false" aria-controls="ai-summary-body">
+              <h3><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9Z"/></svg> AI Summary</h3>
+              <span class="collapsible-chevron"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span>
+            </button>
+          </div>
+          <div class="card-collapsible-body" id="ai-summary-body">
+            <div class="card-collapsible-inner">
+              <div id="report-lede" class="report-lede hidden"></div>
+              <div id="report-body" class="report-body"></div>
+            </div>
+          </div>
         </div>
 
         <div class="card reasoning-rail hidden" id="reasoning-rail">
@@ -645,9 +654,18 @@
           <p class="chat-error hidden" id="chat-error" role="alert"></p>
         </div>
 
-        <div class="card hidden" id="activity-card">
-          <div class="card-head"><h3>Recent activity</h3></div>
-          <ul class="activity-list" id="activity-list"></ul>
+        <div class="card hidden collapsible-card" id="activity-card">
+          <div class="card-head">
+            <button type="button" class="collapsible-toggle" id="activity-toggle" aria-expanded="false" aria-controls="activity-body">
+              <h3>Recent activity</h3>
+              <span class="collapsible-chevron"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span>
+            </button>
+          </div>
+          <div class="card-collapsible-body" id="activity-body">
+            <div class="card-collapsible-inner">
+              <ul class="activity-list" id="activity-list"></ul>
+            </div>
+          </div>
         </div>
       </aside>
       </div><!-- /run-layout -->
