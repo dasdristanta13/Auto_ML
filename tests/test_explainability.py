@@ -130,6 +130,23 @@ def test_compute_explainability_caps_dependence_plots_to_config(tmp_path):
     assert len(explainability["dependence_plots"]) == 3
 
 
+def test_compute_explainability_survives_plot_explanation_failure(monkeypatch, trained_tree_model):
+    import src.training.dispatch as dispatch_module
+
+    def _boom(values, background, feature_names):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(dispatch_module, "_shap_plot_explanation", _boom)
+    model_path, dataset_path = trained_tree_model
+    result = compute_explainability(model_path, dataset_path)
+
+    assert result["method"] == "tree"
+    assert result["feature_impact"]
+    assert result["summary_plot"] is None
+    assert result["bar_plot"] is None
+    assert result["dependence_plots"] == []
+
+
 def test_explain_prediction_returns_ranked_row_contributions(trained_tree_model):
     model_path, dataset_path = trained_tree_model
     result = explain_prediction(model_path, {"x1": 0.9, "x2": 0.1, "x3": 0.5}, dataset_path)

@@ -535,12 +535,15 @@ def compute_explainability(model_path: str, transformed_dataset_path: str) -> di
         ranked = sorted(zip(feature_names, mean_abs), key=lambda pair: pair[1], reverse=True)
         top_n = cfg["top_n_features"]
 
-        explanation = _shap_plot_explanation(values, background, feature_names)
-        summary_plot = _render_beeswarm_plot(explanation)
-        bar_plot = _render_bar_plot(explanation)
-        dependence_plots = _render_dependence_plots(
-            explanation, [name for name, _ in ranked], cfg["dependence_plot_top_n"]
-        )
+        try:
+            explanation = _shap_plot_explanation(values, background, feature_names)
+            summary_plot = _render_beeswarm_plot(explanation)
+            bar_plot = _render_bar_plot(explanation)
+            dependence_plots = _render_dependence_plots(
+                explanation, [name for name, _ in ranked], cfg["dependence_plot_top_n"]
+            )
+        except Exception:  # noqa: BLE001 - a plotting failure must never blank feature_impact/method
+            summary_plot, bar_plot, dependence_plots = None, None, []
 
         return {
             "method": _shap_method_label(explainer),
