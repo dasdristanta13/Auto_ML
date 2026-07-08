@@ -1486,7 +1486,7 @@ function renderTrainProgress(run) {
     return;
   }
   box.classList.remove("hidden");
-  const finished = results.filter((r) => ["succeeded", "failed"].includes(r.status)).length;
+  const finished = results.filter((r) => ["succeeded", "failed", "timed_out"].includes(r.status)).length;
   const pct = Math.round((finished / results.length) * 100);
   const runningNames = results.filter((r) => r.status === "running").map((r) => r.candidate_name);
   $("train-progress-text").innerHTML = `
@@ -1499,11 +1499,12 @@ function renderTrainProgress(run) {
 function tuningStatusText(result) {
   const t = result.tuning || {};
   if (result.status === "pending") return "queued";
+  if (result.status === "timed_out") return "timed out — still training in the background, no longer tracked";
   if (t.note) return t.note;
   if (!t.enabled) return result.status === "running" ? "training…" : result.status;
   const last = t.history[t.history.length - 1];
   const best = last ? `best ${t.metric} ${last.best_score.toFixed(3)}` : "starting…";
-  const doneTraining = ["succeeded", "failed"].includes(result.status);
+  const doneTraining = ["succeeded", "failed", "timed_out"].includes(result.status);
   return doneTraining ? `${t.trials_done} trial(s) · ${best}` : `trial ${t.trials_done} of ${t.trials_total} · ${best}`;
 }
 
@@ -1515,7 +1516,7 @@ function renderTuningProgress(results) {
       return `
       <div class="tuning-row">
         <span class="tuning-name" title="${escapeHtml(r.candidate_name)}">${escapeHtml(r.candidate_name)}</span>
-        <span class="tuning-track"><span class="tuning-fill ${r.status === "failed" ? "failed" : ""}" style="transform:scaleX(${Math.max(pct, 3) / 100})"></span></span>
+        <span class="tuning-track"><span class="tuning-fill ${["failed", "timed_out"].includes(r.status) ? "failed" : ""}" style="transform:scaleX(${Math.max(pct, 3) / 100})"></span></span>
         <span class="tuning-status mono small">${escapeHtml(tuningStatusText(r))}</span>
       </div>`;
     })
@@ -1594,13 +1595,18 @@ function renderReasoningRail(run) {
     section.classList.remove("hidden");
     checklist.innerHTML = results
       .map((r) => {
-        const cls = r.status === "succeeded" ? "done" : r.status === "failed" ? "failed" : r.status === "running" ? "active" : "";
+        const cls =
+          r.status === "succeeded" ? "done"
+          : r.status === "failed" || r.status === "timed_out" ? "failed"
+          : r.status === "running" ? "active"
+          : "";
         const icon =
           r.status === "succeeded" ? ICONS.check
-          : r.status === "failed" ? ICONS.error
+          : r.status === "failed" || r.status === "timed_out" ? ICONS.error
           : r.status === "running" ? '<span class="stage-spinner"></span>'
           : ICONS.clock;
-        return `<li class="${cls}">${icon}<span>${escapeHtml(r.candidate_name)}</span></li>`;
+        const label = r.status === "timed_out" ? `${r.candidate_name} — timed out` : r.candidate_name;
+        return `<li class="${cls}">${icon}<span>${escapeHtml(label)}</span></li>`;
       })
       .join("");
   } else if (retry) {
@@ -2063,7 +2069,7 @@ function renderResults(run) {
     const isBest = r.run_id === bestId;
     html += `<tr class="${isBest ? "best" : ""} ${zebra ? "zebra" : ""}">
       <td>${escapeHtml(r.candidate_name)}${isBest ? '<span class="winner-tag">★ BEST</span>' : ""}</td>
-      <td>${r.status}${r.error ? errorDisclosure(r.error) : ""}</td>
+      <td>${escapeHtml(r.status.replaceAll("_", " "))}${r.error ? errorDisclosure(r.error) : ""}</td>
       ${metricNames.map((m) => `<td class="num">${r.metrics && m in r.metrics ? Number(r.metrics[m]).toFixed(4) : "—"}</td>`).join("")}
       ${hasCv ? `<td class="num">${cvCell(r, metric)}</td>` : ""}
     </tr>`;

@@ -14,6 +14,7 @@ import yaml
 from sklearn.preprocessing import OrdinalEncoder
 
 from src.data_io import load_dataset
+from src.graph import routing
 from src.profiling.eda import run_eda
 from src.profiling.leakage import detect_target_leakage
 from src.profiling.profile import profile_dataset
@@ -304,7 +305,7 @@ def poll_training_node(state: PipelineState) -> PipelineState:
     state["training_results"] = results
 
     all_terminal = all(r["status"] in ("succeeded", "failed") for r in results)
-    if not all_terminal and attempt < cfg["poll_max_attempts"]:
+    if not all_terminal and attempt < routing.poll_max_attempts(state):
         retry_count["poll_training"] = attempt + 1
         state["retry_count"] = retry_count
     return state

@@ -118,7 +118,10 @@ class TuningInfo(BaseModel):
 class TrainingResult(BaseModel):
     run_id: str
     candidate_name: str
-    status: Literal["pending", "running", "succeeded", "failed"]
+    # "timed_out": poll_training's attempt cap was reached while this
+    # candidate was still pending/running (src/graph/routing.py) — its
+    # background job may still be executing, but this run stopped tracking it.
+    status: Literal["pending", "running", "succeeded", "failed", "timed_out"]
     metrics: dict[str, float] = Field(default_factory=dict)
     duration_seconds: Optional[float] = None
     error: Optional[str] = None
