@@ -1093,7 +1093,6 @@ function render(run) {
   renderQuality(run);
   renderInsights(run);
   renderResults(run);
-  renderTuningTrend(run);
   renderExperimentsTab(run);
   renderFeatureImportance(run);
   renderActivity(run);
@@ -2014,6 +2013,7 @@ function renderQuality(run) {
 function renderExperimentsTab(run) {
   renderExperimentsStatCards(run);
   renderExperimentsBarChart(run);
+  renderExperimentsTrend(run);
 }
 
 function renderExperimentsStatCards(run) {
@@ -2163,67 +2163,76 @@ function cvCell(result, metric) {
   return `<span title="${result.cv_folds}-fold cross-validation">${cv.mean.toFixed(4)} ± ${cv.std.toFixed(3)}</span>`;
 }
 
-/* ================= tuning trend chart ================= */
+/* ================= experiment trend chart ================= */
 
-function renderTuningTrend(run) {
-  const card = $("tuning-card");
-  const best = run.best_model || {};
-  const t = best.tuning || {};
-  const history = t.history || [];
-  if (!t.enabled || history.length < 2) {
-    card.classList.add("hidden");
+const EXP_TREND_COLOR_KEYS = ["--cat-1", "--cat-2", "--cat-3", "--cat-4", "--cat-5", "--cat-6", "--cat-7", "--cat-8"];
+
+function renderExperimentsTrend(run) {
+  const card = $("exp-trend-chart").closest(".card");
+  const results = run.training_results || [];
+  const bestId = (run.best_model || {}).run_id;
+  const tuned = results.filter((r) => r.tuning && r.tuning.enabled && (r.tuning.history || []).length > 1);
+
+  $("exp-trend-empty").classList.toggle("hidden", tuned.length > 0);
+  $("exp-trend-chart").classList.toggle("hidden", tuned.length === 0);
+  $("exp-trend-legend").classList.toggle("hidden", tuned.length === 0);
+  if (!tuned.length) {
+    $("exp-trend-sub").textContent = "";
     return;
   }
-  card.classList.remove("hidden");
 
-  const direction = t.lower_is_better ? "lower is better" : "higher is better";
-  $("tuning-sub").textContent = `${best.candidate_name} · ${history.length} trials · ${t.metric} (${direction})`;
+  const named = tuned.slice(0, 8);
+  const overflow = tuned.slice(8);
+  $("exp-trend-sub").textContent = `best-so-far score per trial · ${tuned.length} of ${results.length} candidate(s) shown`;
 
-  // geometry: one x slot per trial, y spans the observed score range with headroom
-  const W = 520, H = 190, padL = 46, padR = 14, padT = 12, padB = 30;
-  const scores = history.map((h) => h.score).concat(history.map((h) => h.best_score));
-  let lo = Math.min(...scores), hi = Math.max(...scores);
+  const styles = getComputedStyle(document.documentElement);
+  const palette = EXP_TREND_COLOR_KEYS.map((k) => styles.getPropertyValue(k).trim());
+
+  const W = 680, H = 240, padL = 50, padR = 16, padT = 14, padB = 30;
+  const maxTrials = Math.max(...tuned.map((r) => r.tuning.history.length));
+  const allScores = tuned.flatMap((r) => r.tuning.history.map((h) => h.best_score));
+  let lo = Math.min(...allScores), hi = Math.max(...allScores);
   if (hi - lo < 1e-9) { hi += 0.001; lo -= 0.001; }
   const span = hi - lo;
   lo -= span * 0.08; hi += span * 0.08;
-  const x = (i) => padL + (history.length === 1 ? 0 : (i / (history.length - 1)) * (W - padL - padR));
+  const x = (i) => padL + (maxTrials <= 1 ? 0 : (i / (maxTrials - 1)) * (W - padL - padR));
   const y = (v) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
 
   const gridValues = [lo + (hi - lo) * 0.1, lo + (hi - lo) * 0.5, lo + (hi - lo) * 0.9];
   const grid = gridValues
-    .map(
-      (v) => `
+    .map((v) => `
       <line x1="${padL}" y1="${y(v)}" x2="${W - padR}" y2="${y(v)}" class="tt-grid"></line>
-      <text x="${padL - 6}" y="${y(v) + 3}" class="tt-axis" text-anchor="end">${v.toFixed(3)}</text>`
-    )
+      <text x="${padL - 6}" y="${y(v) + 3}" class="tt-axis" text-anchor="end">${v.toFixed(3)}</text>`)
     .join("");
 
-  const scoreLine = history.map((h, i) => `${x(i)},${y(h.score)}`).join(" ");
-  const bestLine = history.map((h, i) => `${x(i)},${y(h.best_score)}`).join(" ");
-  const dots = history
-    .map(
-      (h, i) => `
-      <circle cx="${x(i)}" cy="${y(h.score)}" r="3.5" class="tt-dot">
-        <title>${h.trial === 0 ? "Trial 0 (proposed baseline)" : `Trial ${h.trial}`} — ${t.metric}: ${h.score.toFixed(4)} (best so far ${h.best_score.toFixed(4)})</title>
-      </circle>`
-    )
-    .join("");
-  const last = history[history.length - 1];
-  const finalLabel = `<text x="${x(history.length - 1) - 6}" y="${y(last.best_score) - 8}" class="tt-final" text-anchor="end">${last.best_score.toFixed(4)}</text>`;
+  let linesSvg = "";
+  let finalLabel = "";
+  named.forEach((r, i) => {
+    const isBest = r.run_id === bestId;
+    const color = palette[i % palette.length];
+    const points = r.tuning.history.map((h, hi2) => `${x(hi2)},${y(h.best_score)}`).join(" ");
+    linesSvg += `<polyline points="${points}" class="tt-line ${isBest ? "champion" : ""}" style="stroke:${color}"></polyline>`;
+    if (isBest) {
+      const last = r.tuning.history[r.tuning.history.length - 1];
+      finalLabel = `<text x="${x(r.tuning.history.length - 1) - 6}" y="${y(last.best_score) - 8}" class="tt-final" text-anchor="end">${last.best_score.toFixed(4)}</text>`;
+    }
+  });
+  overflow.forEach((r) => {
+    const points = r.tuning.history.map((h, hi2) => `${x(hi2)},${y(h.best_score)}`).join(" ");
+    linesSvg += `<polyline points="${points}" class="tt-line other-fold"></polyline>`;
+  });
 
-  $("tuning-chart").innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Hyperparameter tuning: ${escapeHtml(t.metric)} per trial for ${escapeHtml(best.candidate_name || "the best model")}" style="width:100%;height:auto">
+  $("exp-trend-chart").innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Best-so-far tuning score per trial, one line per candidate" style="width:100%;height:auto">
       ${grid}
-      <polyline points="${bestLine}" class="tt-best-line" fill="none"></polyline>
-      <polyline points="${scoreLine}" class="tt-score-line" fill="none"></polyline>
-      ${dots}
+      ${linesSvg}
       ${finalLabel}
       <text x="${(padL + W - padR) / 2}" y="${H - 8}" class="tt-axis" text-anchor="middle">trial</text>
     </svg>`;
 
-  $("tuning-legend").innerHTML = `
-    <li><span class="tt-chip tt-chip-score"></span>per-trial score</li>
-    <li><span class="tt-chip tt-chip-best"></span>best so far</li>`;
+  $("exp-trend-legend").innerHTML = named
+    .map((r, i) => `<li><span class="tt-chip" style="background:${palette[i % palette.length]}"></span>${escapeHtml(r.candidate_name)}${r.run_id === bestId ? " (champion)" : ""}</li>`)
+    .join("") + (overflow.length ? `<li><span class="tt-chip" style="background:var(--text-secondary);opacity:0.5"></span>${overflow.length} other candidate(s)</li>` : "");
 }
 
 /* ================= AI assistant panel ================= */

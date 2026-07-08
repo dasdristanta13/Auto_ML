@@ -394,18 +394,17 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .tuning-fill.failed { background: var(--accent-danger); }
 .tuning-status { color: var(--text-secondary); text-align: right; }
 
-/* tuning trend chart (score per Optuna trial + best-so-far line) */
+/* experiment trend chart (best-so-far score per Optuna trial, one line per candidate) */
 .tt-grid { stroke: var(--border-subtle); stroke-width: 1; }
 .tt-axis { fill: var(--text-secondary); font-size: 10px; font-family: var(--font-mono); }
 .tt-final { fill: var(--text-primary); font-size: 11px; font-weight: 650; font-family: var(--font-mono); }
-.tt-score-line { stroke: var(--cat-1); stroke-width: 2; stroke-linejoin: round; }
-.tt-best-line { stroke: var(--cat-2); stroke-width: 2; stroke-dasharray: 5 4; stroke-linejoin: round; }
-.tt-dot { fill: var(--cat-1); stroke: var(--bg-surface); stroke-width: 2; }
-.tuning-legend { list-style: none; padding: 0; margin-top: var(--sp-2); display: flex; gap: var(--sp-4); font-size: var(--text-xs); color: var(--text-secondary); }
+.tt-line { stroke-width: 2; stroke-linejoin: round; fill: none; }
+.tt-line.champion { stroke-width: 3; }
+.tt-line.other-fold { stroke: var(--text-secondary); opacity: 0.5; }
+.tt-dot { stroke: var(--bg-surface); stroke-width: 2; }
+.tuning-legend { list-style: none; padding: 0; margin-top: var(--sp-2); display: flex; gap: var(--sp-3); font-size: var(--text-xs); color: var(--text-secondary); flex-wrap: wrap; }
 .tuning-legend li { display: flex; align-items: center; gap: 6px; }
-.tt-chip { width: 14px; height: 0; border-top: 3px solid; border-radius: 2px; }
-.tt-chip-score { border-color: var(--cat-1); }
-.tt-chip-best { border-color: var(--cat-2); border-top-style: dashed; }
+.tt-chip { width: 14px; height: 3px; border-radius: 2px; flex-shrink: 0; }
 
 /* ================= chips / confidence badges ================= */
 
