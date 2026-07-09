@@ -61,6 +61,43 @@ def test_profile_fallback_models_surfaced(backend_config, monkeypatch):
     assert cfg["fallback_models"] == ["openai/gpt-5-nano"]
 
 
+def test_azure_profile_surfaces_endpoint_and_api_version(monkeypatch):
+    cfg = {
+        "backend": "native",
+        "active_profile": "azure",
+        "profiles": {
+            "azure": {
+                "provider": "azure",
+                "model": "gpt-5.4-nano",
+                "azure_endpoint": "https://my-resource.openai.azure.com/",
+                "api_version": "2025-04-01-preview",
+            },
+        },
+        "default": {"temperature": 0.0, "max_tokens": 4096},
+        "nodes": {},
+    }
+    monkeypatch.setattr(llm_client, "_models_config", lambda: cfg)
+    resolved = llm_client.node_model_config("chat")
+    assert resolved["provider"] == "azure"
+    assert resolved["model"] == "gpt-5.4-nano"
+    assert resolved["azure_endpoint"] == "https://my-resource.openai.azure.com/"
+    assert resolved["api_version"] == "2025-04-01-preview"
+
+
+def test_azure_profile_without_azure_endpoint_still_resolves(monkeypatch):
+    cfg = {
+        "backend": "native",
+        "active_profile": "azure",
+        "profiles": {"azure": {"provider": "azure", "model": "gpt-5.4-nano"}},
+        "default": {"temperature": 0.0, "max_tokens": 4096},
+        "nodes": {},
+    }
+    monkeypatch.setattr(llm_client, "_models_config", lambda: cfg)
+    resolved = llm_client.node_model_config("chat")
+    assert resolved["provider"] == "azure"
+    assert "azure_endpoint" not in resolved
+
+
 def test_legacy_schema_without_profiles_has_empty_fallback_models(monkeypatch):
     legacy_cfg = {
         "default": {"provider": "openai", "model": "gpt-5-nano", "temperature": 0.0, "max_tokens": 4096},
@@ -104,6 +141,51 @@ class _FakeLiteLLM:
         if self.cost_error:
             raise ValueError("no cost data for this model")
         return self.cost
+
+
+class _FakeAzureMessage:
+    def __init__(self, content):
+        self.content = content
+
+
+class _FakeAzureChoice:
+    def __init__(self, content, finish_reason="stop"):
+        self.message = _FakeAzureMessage(content)
+        self.finish_reason = finish_reason
+
+
+class _FakeAzureCompletionResponse:
+    def __init__(self, content, finish_reason="stop"):
+        self.choices = [_FakeAzureChoice(content, finish_reason)]
+
+
+class _FakeAzureChatCompletions:
+    def __init__(self, content, finish_reason):
+        self._content = content
+        self._finish_reason = finish_reason
+        self.last_kwargs = None
+
+    def create(self, **kwargs):
+        self.last_kwargs = kwargs
+        return _FakeAzureCompletionResponse(self._content, self._finish_reason)
+
+
+class _FakeAzureChat:
+    def __init__(self, content, finish_reason):
+        self.completions = _FakeAzureChatCompletions(content, finish_reason)
+
+
+class _FakeAzureOpenAI:
+    """Stand-in for openai.AzureOpenAI — records constructor args and the
+    chat.completions.create kwargs so tests can assert on both."""
+
+    last_instance = None
+
+    def __init__(self, content="hello from azure", finish_reason="stop", azure_endpoint=None, api_version=None):
+        self.azure_endpoint = azure_endpoint
+        self.api_version = api_version
+        self.chat = _FakeAzureChat(content, finish_reason)
+        _FakeAzureOpenAI.last_instance = self
 
 
 @pytest.fixture()
@@ -203,6 +285,78 @@ def test_generate_native_backend_calls_call_openai(generate_cfg, monkeypatch):
     assert calls["args"][2] == "gpt-5-nano"
 
 
+@pytest.fixture()
+def azure_generate_cfg(monkeypatch):
+    cfg = {
+        "backend": "native",
+        "active_profile": "azure",
+        "profiles": {
+            "azure": {
+                "provider": "azure",
+                "model": "gpt-5.4-nano",
+                "azure_endpoint": "https://my-resource.openai.azure.com/",
+                "api_version": "2025-04-01-preview",
+            },
+        },
+        "default": {"temperature": 0.0, "max_tokens": 4096},
+        "nodes": {},
+    }
+    monkeypatch.setattr(llm_client, "_models_config", lambda: cfg)
+    monkeypatch.setattr(
+        llm_client, "_runtime_config", lambda: {"budgets": {"max_llm_calls_per_run": 100}}
+    )
+    return cfg
+
+
+def test_generate_native_backend_calls_call_azure_openai(azure_generate_cfg, monkeypatch):
+    calls = {}
+
+    def fake_call_azure_openai(system, user, model, temperature, max_tokens, json_mode, azure_endpoint, api_version):
+        calls["args"] = (model, azure_endpoint, api_version, json_mode)
+        return "azure response"
+
+    monkeypatch.setattr(llm_client, "_call_azure_openai", fake_call_azure_openai)
+    client = llm_client.LLMClient()
+    result = client.generate("run-azure-1", "chat", "system prompt", "user prompt")
+
+    assert result == "azure response"
+    assert calls["args"] == (
+        "gpt-5.4-nano", "https://my-resource.openai.azure.com/", "2025-04-01-preview", False,
+    )
+
+
+def test_generate_azure_missing_endpoint_raises_value_error(azure_generate_cfg, monkeypatch):
+    azure_generate_cfg["profiles"]["azure"].pop("azure_endpoint")
+    called = {"count": 0}
+
+    def fail_if_called(*args, **kwargs):
+        called["count"] += 1
+        raise AssertionError("_call_azure_openai should not be invoked")
+
+    monkeypatch.setattr(llm_client, "_call_azure_openai", fail_if_called)
+    client = llm_client.LLMClient()
+
+    with pytest.raises(ValueError, match="azure_endpoint"):
+        client.generate("run-azure-2", "chat", "system prompt", "user prompt")
+
+    assert called["count"] == 0
+
+
+def test_generate_azure_falls_back_to_default_api_version(azure_generate_cfg, monkeypatch):
+    azure_generate_cfg["profiles"]["azure"].pop("api_version")
+    calls = {}
+
+    def fake_call_azure_openai(system, user, model, temperature, max_tokens, json_mode, azure_endpoint, api_version):
+        calls["api_version"] = api_version
+        return "azure response"
+
+    monkeypatch.setattr(llm_client, "_call_azure_openai", fake_call_azure_openai)
+    client = llm_client.LLMClient()
+    client.generate("run-azure-3", "chat", "system prompt", "user prompt")
+
+    assert calls["api_version"] == llm_client._DEFAULT_AZURE_API_VERSION
+
+
 def test_generate_litellm_backend_calls_call_litellm(generate_cfg, monkeypatch):
     generate_cfg["backend"] = "litellm"
     calls = {}
@@ -238,8 +392,71 @@ def test_generate_litellm_cost_reaches_trace_log(generate_cfg, monkeypatch):
     assert logged["extra"]["cost_usd"] == 0.0037
 
 
+def test_call_azure_openai_passes_endpoint_and_deployment(monkeypatch):
+    fake_module = type("FakeOpenAIModule", (), {"AzureOpenAI": _FakeAzureOpenAI})
+    monkeypatch.setitem(__import__("sys").modules, "openai", fake_module)
+
+    result = llm_client._call_azure_openai(
+        "sys", "user", "gpt-5.4-nano", 0.0, 2048,
+        json_mode=False,
+        azure_endpoint="https://my-resource.openai.azure.com/",
+        api_version="2025-04-01-preview",
+    )
+
+    assert result == "hello from azure"
+    instance = _FakeAzureOpenAI.last_instance
+    assert instance.azure_endpoint == "https://my-resource.openai.azure.com/"
+    assert instance.api_version == "2025-04-01-preview"
+    assert instance.chat.completions.last_kwargs["model"] == "gpt-5.4-nano"
+    assert instance.chat.completions.last_kwargs["messages"] == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "user"},
+    ]
+
+
+def test_call_azure_openai_json_mode_sets_response_format(monkeypatch):
+    fake_module = type("FakeOpenAIModule", (), {"AzureOpenAI": _FakeAzureOpenAI})
+    monkeypatch.setitem(__import__("sys").modules, "openai", fake_module)
+
+    llm_client._call_azure_openai(
+        "sys", "user", "gpt-5.4-nano", 0.0, 2048,
+        json_mode=True,
+        azure_endpoint="https://my-resource.openai.azure.com/",
+        api_version="2025-04-01-preview",
+    )
+
+    kwargs = _FakeAzureOpenAI.last_instance.chat.completions.last_kwargs
+    assert kwargs["response_format"] == {"type": "json_object"}
+
+
+def test_call_azure_openai_raises_on_empty_content(monkeypatch):
+    fake_module = type(
+        "FakeOpenAIModule", (),
+        {"AzureOpenAI": lambda **kw: _FakeAzureOpenAI(content=None, finish_reason="length", **kw)},
+    )
+    monkeypatch.setitem(__import__("sys").modules, "openai", fake_module)
+
+    with pytest.raises(RuntimeError, match="empty content"):
+        llm_client._call_azure_openai(
+            "sys", "user", "gpt-5.4-nano", 0.0, 2048,
+            json_mode=False,
+            azure_endpoint="https://my-resource.openai.azure.com/",
+            api_version="2025-04-01-preview",
+        )
+
+
 def test_shipped_models_yaml_defaults_to_native_backend(monkeypatch):
     llm_client._models_config.cache_clear()
     cfg = llm_client.node_model_config("chat")
     assert cfg["backend"] == "native"
     assert cfg["fallback_models"] == []
+
+
+def test_shipped_models_yaml_has_azure_profile(monkeypatch):
+    llm_client._models_config.cache_clear()
+    monkeypatch.setenv("AUTOML_LLM_PROFILE", "azure")
+    cfg = llm_client.node_model_config("chat")
+    assert cfg["provider"] == "azure"
+    assert cfg["model"] == "gpt-5.4-nano"
+    assert cfg["azure_endpoint"]
+    assert cfg["api_version"] == "2025-04-01-preview"
