@@ -312,6 +312,50 @@ def _call_gemini(system: str, user: str, model: str, temperature: float, max_tok
     return resp.text
 
 
+_DEFAULT_AZURE_API_VERSION = "2025-04-01-preview"
+
+
+def _call_azure_openai(
+    system: str,
+    user: str,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    json_mode: bool,
+    azure_endpoint: str,
+    api_version: str,
+) -> str:
+    """`model` is the Azure *deployment name* (set via config/models.yaml's
+    profile `model` field), not an OpenAI model id. The API key is read from
+    AZURE_OPENAI_API_KEY by the SDK's default env lookup — never passed or
+    logged here (CLAUDE.md: no hardcoded credentials)."""
+    from openai import AzureOpenAI
+
+    client = AzureOpenAI(azure_endpoint=azure_endpoint, api_version=api_version)
+    kwargs: dict[str, Any] = {"max_tokens": max_tokens, "temperature": temperature}
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        **kwargs,
+    )
+    content = resp.choices[0].message.content
+    if not content:
+        finish_reason = resp.choices[0].finish_reason
+        raise RuntimeError(
+            f"Azure OpenAI returned empty content (finish_reason={finish_reason}). "
+            "This usually means the token budget was exhausted before any visible "
+            "output was written — increase max_tokens for this node in "
+            "config/models.yaml."
+        )
+    return content
+
+
 def _call_litellm(
     system: str,
     user: str,

@@ -143,6 +143,51 @@ class _FakeLiteLLM:
         return self.cost
 
 
+class _FakeAzureMessage:
+    def __init__(self, content):
+        self.content = content
+
+
+class _FakeAzureChoice:
+    def __init__(self, content, finish_reason="stop"):
+        self.message = _FakeAzureMessage(content)
+        self.finish_reason = finish_reason
+
+
+class _FakeAzureCompletionResponse:
+    def __init__(self, content, finish_reason="stop"):
+        self.choices = [_FakeAzureChoice(content, finish_reason)]
+
+
+class _FakeAzureChatCompletions:
+    def __init__(self, content, finish_reason):
+        self._content = content
+        self._finish_reason = finish_reason
+        self.last_kwargs = None
+
+    def create(self, **kwargs):
+        self.last_kwargs = kwargs
+        return _FakeAzureCompletionResponse(self._content, self._finish_reason)
+
+
+class _FakeAzureChat:
+    def __init__(self, content, finish_reason):
+        self.completions = _FakeAzureChatCompletions(content, finish_reason)
+
+
+class _FakeAzureOpenAI:
+    """Stand-in for openai.AzureOpenAI — records constructor args and the
+    chat.completions.create kwargs so tests can assert on both."""
+
+    last_instance = None
+
+    def __init__(self, content="hello from azure", finish_reason="stop", azure_endpoint=None, api_version=None):
+        self.azure_endpoint = azure_endpoint
+        self.api_version = api_version
+        self.chat = _FakeAzureChat(content, finish_reason)
+        _FakeAzureOpenAI.last_instance = self
+
+
 @pytest.fixture()
 def fake_litellm(monkeypatch):
     fake = _FakeLiteLLM()
@@ -273,6 +318,59 @@ def test_generate_litellm_cost_reaches_trace_log(generate_cfg, monkeypatch):
     client.generate("run-3", "chat", "system prompt", "user prompt")
 
     assert logged["extra"]["cost_usd"] == 0.0037
+
+
+def test_call_azure_openai_passes_endpoint_and_deployment(monkeypatch):
+    fake_module = type("FakeOpenAIModule", (), {"AzureOpenAI": _FakeAzureOpenAI})
+    monkeypatch.setitem(__import__("sys").modules, "openai", fake_module)
+
+    result = llm_client._call_azure_openai(
+        "sys", "user", "gpt-5.4-nano", 0.0, 2048,
+        json_mode=False,
+        azure_endpoint="https://my-resource.openai.azure.com/",
+        api_version="2025-04-01-preview",
+    )
+
+    assert result == "hello from azure"
+    instance = _FakeAzureOpenAI.last_instance
+    assert instance.azure_endpoint == "https://my-resource.openai.azure.com/"
+    assert instance.api_version == "2025-04-01-preview"
+    assert instance.chat.completions.last_kwargs["model"] == "gpt-5.4-nano"
+    assert instance.chat.completions.last_kwargs["messages"] == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "user"},
+    ]
+
+
+def test_call_azure_openai_json_mode_sets_response_format(monkeypatch):
+    fake_module = type("FakeOpenAIModule", (), {"AzureOpenAI": _FakeAzureOpenAI})
+    monkeypatch.setitem(__import__("sys").modules, "openai", fake_module)
+
+    llm_client._call_azure_openai(
+        "sys", "user", "gpt-5.4-nano", 0.0, 2048,
+        json_mode=True,
+        azure_endpoint="https://my-resource.openai.azure.com/",
+        api_version="2025-04-01-preview",
+    )
+
+    kwargs = _FakeAzureOpenAI.last_instance.chat.completions.last_kwargs
+    assert kwargs["response_format"] == {"type": "json_object"}
+
+
+def test_call_azure_openai_raises_on_empty_content(monkeypatch):
+    fake_module = type(
+        "FakeOpenAIModule", (),
+        {"AzureOpenAI": lambda **kw: _FakeAzureOpenAI(content=None, finish_reason="length", **kw)},
+    )
+    monkeypatch.setitem(__import__("sys").modules, "openai", fake_module)
+
+    with pytest.raises(RuntimeError, match="empty content"):
+        llm_client._call_azure_openai(
+            "sys", "user", "gpt-5.4-nano", 0.0, 2048,
+            json_mode=False,
+            azure_endpoint="https://my-resource.openai.azure.com/",
+            api_version="2025-04-01-preview",
+        )
 
 
 def test_shipped_models_yaml_defaults_to_native_backend(monkeypatch):
