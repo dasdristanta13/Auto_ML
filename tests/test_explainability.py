@@ -101,6 +101,8 @@ def test_compute_explainability_never_raises_on_missing_artifact(tmp_path):
     assert result["summary_plot"] is None
     assert result["bar_plot"] is None
     assert result["dependence_plots"] == []
+    assert result["fidelity_r2"] is None
+    assert result["background_sample_size"] == 0
 
 
 def test_compute_explainability_includes_plots(trained_tree_model):
@@ -115,6 +117,31 @@ def test_compute_explainability_includes_plots(trained_tree_model):
     for plot in result["dependence_plots"]:
         assert plot["feature"] in {"x1", "x2", "x3"}
         assert base64.b64decode(plot["image_base64"])[:4] == _PNG_HEADER
+
+
+def test_compute_explainability_includes_fidelity_and_sample_size(trained_tree_model):
+    model_path, dataset_path = trained_tree_model
+    result = compute_explainability(model_path, dataset_path)
+    assert isinstance(result["fidelity_r2"], float)
+    assert result["background_sample_size"] == 100  # min(max_background_rows=100, n=150)
+
+
+def test_compute_explainability_fidelity_none_for_multiclass(tmp_path):
+    rng = np.random.default_rng(6)
+    n = 150
+    df = pd.DataFrame({"x1": rng.random(n), "x2": rng.random(n), "target": rng.integers(0, 3, n)})
+    dataset_path = tmp_path / "multiclass.csv"
+    df.to_csv(dataset_path, index=False)
+    result = _train("expl-multiclass", dataset_path, "RandomForestClassifier", {"n_estimators": 10, "max_depth": 3, "random_state": 0})
+
+    explainability = compute_explainability(result["model_path"], str(dataset_path))
+    assert explainability["fidelity_r2"] is None
+
+
+def test_compute_explainability_feature_impact_includes_signed_shap(trained_tree_model):
+    model_path, dataset_path = trained_tree_model
+    result = compute_explainability(model_path, dataset_path)
+    assert all("mean_signed_shap" in f for f in result["feature_impact"])
 
 
 def test_compute_explainability_caps_dependence_plots_to_config(tmp_path):
@@ -204,6 +231,64 @@ def test_shap_method_label_falls_back_to_kernel_for_unsupported_estimator():
     model = KNeighborsClassifier().fit(X, y)
     explainer = _build_shap_explainer(model, X[:20], ["a", "b", "c"])
     assert _shap_method_label(explainer) == "kernel"
+
+
+class _FakeBinaryModel:
+    def predict_proba(self, X):
+        return np.column_stack([1 - X[:, 0], X[:, 0]])
+
+
+class _FakeMulticlassModel:
+    def predict_proba(self, X):
+        return np.column_stack([X[:, 0], X[:, 0], 1 - 2 * X[:, 0]])
+
+
+class _FakeRegressor:
+    def predict(self, X):
+        return X[:, 0] + X[:, 1]
+
+
+def test_shap_fidelity_r2_perfect_reconstruction_for_binary():
+    from src.training.dispatch import _shap_fidelity_r2
+
+    background = np.array([[0.2, 0.0], [0.7, 0.0], [0.5, 0.0]])
+    model = _FakeBinaryModel()
+    proba = model.predict_proba(background)[:, 1]
+    base_values = np.zeros(3)
+    values = np.column_stack([proba, np.zeros(3)])  # reconstruction == proba exactly
+    result = _shap_fidelity_r2(model, background, values, base_values)
+    assert result == pytest.approx(1.0)
+
+
+def test_shap_fidelity_r2_none_for_multiclass():
+    from src.training.dispatch import _shap_fidelity_r2
+
+    background = np.array([[0.2, 0.0], [0.7, 0.0]])
+    model = _FakeMulticlassModel()
+    result = _shap_fidelity_r2(model, background, np.zeros((2, 2)), np.zeros(2))
+    assert result is None
+
+
+def test_shap_fidelity_r2_uses_predict_for_regression():
+    from src.training.dispatch import _shap_fidelity_r2
+
+    background = np.array([[1.0, 2.0], [3.0, 4.0]])
+    model = _FakeRegressor()
+    base_values = np.zeros(2)
+    values = np.column_stack([background[:, 0], background[:, 1]])  # sum == predict() exactly
+    result = _shap_fidelity_r2(model, background, values, base_values)
+    assert result == pytest.approx(1.0)
+
+
+def test_shap_fidelity_r2_returns_none_on_failure():
+    from src.training.dispatch import _shap_fidelity_r2
+
+    class _Boom:
+        def predict(self, X):
+            raise RuntimeError("boom")
+
+    result = _shap_fidelity_r2(_Boom(), np.array([[1.0]]), np.array([[1.0]]), np.zeros(1))
+    assert result is None
 
 
 def test_render_dependence_plots_skips_unknown_feature_without_raising():

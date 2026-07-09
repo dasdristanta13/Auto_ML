@@ -511,6 +511,29 @@ def _render_waterfall_plot(
         return None
 
 
+def _shap_fidelity_r2(
+    model, background: np.ndarray, values: np.ndarray, base_values: np.ndarray
+) -> Optional[float]:
+    """R² between the model's actual output and the SHAP reconstruction
+    (base value + sum of per-feature contributions) over the background
+    sample — a diagnostic of how well these SHAP values explain the model's
+    output. None when there's no single scalar output to compare against
+    (e.g. multiclass classification), or on any failure — this is a
+    diagnostic extra, never a reason to fail compute_explainability."""
+    try:
+        if hasattr(model, "predict_proba"):
+            proba = model.predict_proba(background)
+            if proba.ndim != 2 or proba.shape[1] != 2:
+                return None
+            model_output = proba[:, 1]
+        else:
+            model_output = model.predict(background)
+        reconstructed = base_values + values.sum(axis=1)
+        return float(r2_score(model_output, reconstructed))
+    except Exception:  # noqa: BLE001 - fidelity is a diagnostic extra, never fatal
+        return None
+
+
 def compute_explainability(model_path: str, transformed_dataset_path: str) -> dict[str, Any]:
     """Best-effort aggregate SHAP feature impact for the winning model,
     computed once after training (explainability_node). Never raises —
@@ -530,9 +553,14 @@ def compute_explainability(model_path: str, transformed_dataset_path: str) -> di
         explainer = _build_shap_explainer(model, background, feature_names)
         shap_values = explainer(background)
         values = _reduce_shap_values(np.asarray(shap_values.values))
+        base_values = _reduce_shap_base_values(np.asarray(shap_values.base_values))
         mean_abs = np.abs(values).mean(axis=0)
+        mean_signed = values.mean(axis=0)
+        fidelity_r2 = _shap_fidelity_r2(model, background, values, base_values)
 
-        ranked = sorted(zip(feature_names, mean_abs), key=lambda pair: pair[1], reverse=True)
+        ranked = sorted(
+            zip(feature_names, mean_abs, mean_signed), key=lambda triple: triple[1], reverse=True
+        )
         top_n = cfg["top_n_features"]
 
         try:
@@ -540,7 +568,7 @@ def compute_explainability(model_path: str, transformed_dataset_path: str) -> di
             summary_plot = _render_beeswarm_plot(explanation)
             bar_plot = _render_bar_plot(explanation)
             dependence_plots = _render_dependence_plots(
-                explanation, [name for name, _ in ranked], cfg["dependence_plot_top_n"]
+                explanation, [name for name, _, _ in ranked], cfg["dependence_plot_top_n"]
             )
         except Exception:  # noqa: BLE001 - a plotting failure must never blank feature_impact/method
             summary_plot, bar_plot, dependence_plots = None, None, []
@@ -548,13 +576,16 @@ def compute_explainability(model_path: str, transformed_dataset_path: str) -> di
         return {
             "method": _shap_method_label(explainer),
             "feature_impact": [
-                {"feature": name, "mean_abs_shap": round(float(value), 6)} for name, value in ranked[:top_n]
+                {"feature": name, "mean_abs_shap": round(float(abs_v), 6), "mean_signed_shap": round(float(signed_v), 6)}
+                for name, abs_v, signed_v in ranked[:top_n]
             ],
             "narrative": None,
             "note": None,
             "summary_plot": summary_plot,
             "bar_plot": bar_plot,
             "dependence_plots": dependence_plots,
+            "fidelity_r2": fidelity_r2,
+            "background_sample_size": int(len(background)),
         }
     except Exception as exc:  # noqa: BLE001 - explainability is best-effort, never fatal
         return {
@@ -565,6 +596,8 @@ def compute_explainability(model_path: str, transformed_dataset_path: str) -> di
             "summary_plot": None,
             "bar_plot": None,
             "dependence_plots": [],
+            "fidelity_r2": None,
+            "background_sample_size": 0,
         }
 
 
