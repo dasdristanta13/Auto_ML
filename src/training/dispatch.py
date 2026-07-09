@@ -519,7 +519,17 @@ def _shap_fidelity_r2(
     sample — a diagnostic of how well these SHAP values explain the model's
     output. None when there's no single scalar output to compare against
     (e.g. multiclass classification), or on any failure — this is a
-    diagnostic extra, never a reason to fail compute_explainability."""
+    diagnostic extra, never a reason to fail compute_explainability.
+
+    Tree SHAP reconstructs different quantities depending on the library:
+    sklearn's bagged ensembles (e.g. RandomForest) average class-probability
+    leaf values directly, so base + sum(shap) already lands in [0, 1] and
+    matches predict_proba(). Boosting libraries with a log-odds link
+    (XGBoost, LightGBM, sklearn's own GradientBoostingClassifier) instead
+    reconstruct the pre-sigmoid margin, which must be pushed back through a
+    sigmoid before it's comparable to predict_proba() — comparing the raw
+    margin against a probability otherwise yields a meaningless, wildly
+    negative R² even when the SHAP values perfectly reconstruct the model."""
     try:
         if hasattr(model, "predict_proba"):
             proba = model.predict_proba(background)
@@ -529,6 +539,8 @@ def _shap_fidelity_r2(
         else:
             model_output = model.predict(background)
         reconstructed = base_values + values.sum(axis=1)
+        if hasattr(model, "predict_proba") and (reconstructed.min() < -1e-6 or reconstructed.max() > 1 + 1e-6):
+            reconstructed = 1.0 / (1.0 + np.exp(-reconstructed))
         return float(r2_score(model_output, reconstructed))
     except Exception:  # noqa: BLE001 - fidelity is a diagnostic extra, never fatal
         return None

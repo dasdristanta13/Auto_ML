@@ -249,6 +249,18 @@ class _FakeRegressor:
         return X[:, 0] + X[:, 1]
 
 
+class _FakeMarginLinkBinaryModel:
+    """Mimics XGBoost/LightGBM/sklearn-GradientBoosting: SHAP's tree
+    reconstruction for these estimators lands in the pre-sigmoid margin
+    (log-odds) space, not probability space, even though predict_proba()
+    returns probabilities. base + sum(shap) reconstructs the margin here."""
+
+    def predict_proba(self, X):
+        margin = X[:, 0]
+        proba_positive = 1.0 / (1.0 + np.exp(-margin))
+        return np.column_stack([1 - proba_positive, proba_positive])
+
+
 def test_shap_fidelity_r2_perfect_reconstruction_for_binary():
     from src.training.dispatch import _shap_fidelity_r2
 
@@ -257,6 +269,23 @@ def test_shap_fidelity_r2_perfect_reconstruction_for_binary():
     proba = model.predict_proba(background)[:, 1]
     base_values = np.zeros(3)
     values = np.column_stack([proba, np.zeros(3)])  # reconstruction == proba exactly
+    result = _shap_fidelity_r2(model, background, values, base_values)
+    assert result == pytest.approx(1.0)
+
+
+def test_shap_fidelity_r2_applies_sigmoid_for_margin_space_reconstruction():
+    """Regression test: boosting libraries with a log-odds link (XGBoost,
+    LightGBM, sklearn's GradientBoostingClassifier) reconstruct the SHAP
+    margin, not predict_proba() directly. Comparing that margin against
+    predict_proba() without an inverse-link transform previously produced a
+    wildly wrong (large negative) R² even for a perfect reconstruction."""
+    from src.training.dispatch import _shap_fidelity_r2
+
+    background = np.array([[-2.0, 0.0], [0.5, 0.0], [3.0, 0.0], [-0.3, 0.0]])
+    model = _FakeMarginLinkBinaryModel()
+    margin = background[:, 0]  # the exact quantity SHAP would reconstruct
+    base_values = np.zeros(4)
+    values = np.column_stack([margin, np.zeros(4)])  # reconstruction == margin exactly
     result = _shap_fidelity_r2(model, background, values, base_values)
     assert result == pytest.approx(1.0)
 
