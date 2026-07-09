@@ -1923,12 +1923,33 @@ function renderDatasetSummary(run) {
 
 /* ================= class distribution (classification targets) ================= */
 
+function classEntriesFor(target, rowCount) {
+  if (target && target.top_values) {
+    return Object.entries(target.top_values).sort((a, b) => b[1] - a[1]);
+  }
+  // src/profiling/profile.py only populates top_values for categorical
+  // columns (or, in the wide-dataset path, low-cardinality numeric ones) —
+  // a numeric 0/1-encoded binary target in a normal dataset never gets one.
+  // Mirror src/profiling/heuristics.py's minority_ratio() fallback, which
+  // already reads numeric_summary.mean as the positive rate for exactly
+  // this case, so the donut still renders for the common binary-int target.
+  const mean = target && target.numeric_summary ? target.numeric_summary.mean : null;
+  if (target && target.n_unique === 2 && rowCount && mean != null && mean >= 0 && mean <= 1) {
+    const positives = Math.round(mean * rowCount);
+    const negatives = rowCount - positives;
+    if (positives > 0 && negatives > 0) {
+      return [["1", positives], ["0", negatives]].sort((a, b) => b[1] - a[1]);
+    }
+  }
+  return [];
+}
+
 function renderClassDistribution(run) {
   const card = $("classdist-card");
   const spec = run.task_spec || {};
   const confirmed = (run.stages_done || []).includes("confirm");
   const target = (run.profile_columns || []).find((c) => c.name === spec.target_column);
-  const entries = target && target.top_values ? Object.entries(target.top_values).sort((a, b) => b[1] - a[1]) : [];
+  const entries = classEntriesFor(target, (run.profile_summary || {}).row_count);
   if (spec.task_type !== "classification" || !confirmed || entries.length < 2) {
     card.classList.add("hidden");
     return;
