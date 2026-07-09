@@ -24,6 +24,7 @@ from src.training.dispatch import (
     _shap_plot_explanation,
     compute_explainability,
     explain_prediction,
+    sample_local_explanation,
 )
 
 _PNG_HEADER = b"\x89PNG"
@@ -78,6 +79,7 @@ def test_compute_explainability_linear_model(trained_linear_model):
     assert result["method"] == "linear"
     assert result["note"] is None
     assert result["feature_impact"]
+    assert result["fidelity_r2"] > 0.9
 
 
 def test_compute_explainability_caps_to_top_n_features(tmp_path):
@@ -101,6 +103,8 @@ def test_compute_explainability_never_raises_on_missing_artifact(tmp_path):
     assert result["summary_plot"] is None
     assert result["bar_plot"] is None
     assert result["dependence_plots"] == []
+    assert result["fidelity_r2"] is None
+    assert result["background_sample_size"] == 0
 
 
 def test_compute_explainability_includes_plots(trained_tree_model):
@@ -115,6 +119,31 @@ def test_compute_explainability_includes_plots(trained_tree_model):
     for plot in result["dependence_plots"]:
         assert plot["feature"] in {"x1", "x2", "x3"}
         assert base64.b64decode(plot["image_base64"])[:4] == _PNG_HEADER
+
+
+def test_compute_explainability_includes_fidelity_and_sample_size(trained_tree_model):
+    model_path, dataset_path = trained_tree_model
+    result = compute_explainability(model_path, dataset_path)
+    assert isinstance(result["fidelity_r2"], float)
+    assert result["background_sample_size"] == 100  # min(max_background_rows=100, n=150)
+
+
+def test_compute_explainability_fidelity_none_for_multiclass(tmp_path):
+    rng = np.random.default_rng(6)
+    n = 150
+    df = pd.DataFrame({"x1": rng.random(n), "x2": rng.random(n), "target": rng.integers(0, 3, n)})
+    dataset_path = tmp_path / "multiclass.csv"
+    df.to_csv(dataset_path, index=False)
+    result = _train("expl-multiclass", dataset_path, "RandomForestClassifier", {"n_estimators": 10, "max_depth": 3, "random_state": 0})
+
+    explainability = compute_explainability(result["model_path"], str(dataset_path))
+    assert explainability["fidelity_r2"] is None
+
+
+def test_compute_explainability_feature_impact_includes_signed_shap(trained_tree_model):
+    model_path, dataset_path = trained_tree_model
+    result = compute_explainability(model_path, dataset_path)
+    assert all("mean_signed_shap" in f for f in result["feature_impact"])
 
 
 def test_compute_explainability_caps_dependence_plots_to_config(tmp_path):
@@ -206,6 +235,93 @@ def test_shap_method_label_falls_back_to_kernel_for_unsupported_estimator():
     assert _shap_method_label(explainer) == "kernel"
 
 
+class _FakeBinaryModel:
+    def predict_proba(self, X):
+        return np.column_stack([1 - X[:, 0], X[:, 0]])
+
+
+class _FakeMulticlassModel:
+    def predict_proba(self, X):
+        return np.column_stack([X[:, 0], X[:, 0], 1 - 2 * X[:, 0]])
+
+
+class _FakeRegressor:
+    def predict(self, X):
+        return X[:, 0] + X[:, 1]
+
+
+class _FakeMarginLinkBinaryModel:
+    """Mimics XGBoost/LightGBM/sklearn-GradientBoosting: SHAP's tree
+    reconstruction for these estimators lands in the pre-sigmoid margin
+    (log-odds) space, not probability space, even though predict_proba()
+    returns probabilities. base + sum(shap) reconstructs the margin here."""
+
+    def predict_proba(self, X):
+        margin = X[:, 0]
+        proba_positive = 1.0 / (1.0 + np.exp(-margin))
+        return np.column_stack([1 - proba_positive, proba_positive])
+
+
+def test_shap_fidelity_r2_perfect_reconstruction_for_binary():
+    from src.training.dispatch import _shap_fidelity_r2
+
+    background = np.array([[0.2, 0.0], [0.7, 0.0], [0.5, 0.0]])
+    model = _FakeBinaryModel()
+    proba = model.predict_proba(background)[:, 1]
+    base_values = np.zeros(3)
+    values = np.column_stack([proba, np.zeros(3)])  # reconstruction == proba exactly
+    result = _shap_fidelity_r2(model, background, values, base_values)
+    assert result == pytest.approx(1.0)
+
+
+def test_shap_fidelity_r2_applies_sigmoid_for_margin_space_reconstruction():
+    """Regression test: boosting libraries with a log-odds link (XGBoost,
+    LightGBM, sklearn's GradientBoostingClassifier) reconstruct the SHAP
+    margin, not predict_proba() directly. Comparing that margin against
+    predict_proba() without an inverse-link transform previously produced a
+    wildly wrong (large negative) R² even for a perfect reconstruction."""
+    from src.training.dispatch import _shap_fidelity_r2
+
+    background = np.array([[-2.0, 0.0], [0.5, 0.0], [3.0, 0.0], [-0.3, 0.0]])
+    model = _FakeMarginLinkBinaryModel()
+    margin = background[:, 0]  # the exact quantity SHAP would reconstruct
+    base_values = np.zeros(4)
+    values = np.column_stack([margin, np.zeros(4)])  # reconstruction == margin exactly
+    result = _shap_fidelity_r2(model, background, values, base_values)
+    assert result == pytest.approx(1.0)
+
+
+def test_shap_fidelity_r2_none_for_multiclass():
+    from src.training.dispatch import _shap_fidelity_r2
+
+    background = np.array([[0.2, 0.0], [0.7, 0.0]])
+    model = _FakeMulticlassModel()
+    result = _shap_fidelity_r2(model, background, np.zeros((2, 2)), np.zeros(2))
+    assert result is None
+
+
+def test_shap_fidelity_r2_uses_predict_for_regression():
+    from src.training.dispatch import _shap_fidelity_r2
+
+    background = np.array([[1.0, 2.0], [3.0, 4.0]])
+    model = _FakeRegressor()
+    base_values = np.zeros(2)
+    values = np.column_stack([background[:, 0], background[:, 1]])  # sum == predict() exactly
+    result = _shap_fidelity_r2(model, background, values, base_values)
+    assert result == pytest.approx(1.0)
+
+
+def test_shap_fidelity_r2_returns_none_on_failure():
+    from src.training.dispatch import _shap_fidelity_r2
+
+    class _Boom:
+        def predict(self, X):
+            raise RuntimeError("boom")
+
+    result = _shap_fidelity_r2(_Boom(), np.array([[1.0]]), np.array([[1.0]]), np.zeros(1))
+    assert result is None
+
+
 def test_render_dependence_plots_skips_unknown_feature_without_raising():
     explanation = _shap_plot_explanation(
         np.array([[1.0, 2.0], [3.0, 4.0]]), np.array([[0.1, 0.2], [0.3, 0.4]]), ["a", "b"]
@@ -231,3 +347,43 @@ def test_render_beeswarm_plot_closes_figure_on_failure(monkeypatch):
     result = _render_beeswarm_plot(explanation)
     assert result is None
     assert set(plt.get_fignums()) == before
+
+
+def test_explain_prediction_includes_base_value(trained_tree_model):
+    model_path, dataset_path = trained_tree_model
+    result = explain_prediction(model_path, {"x1": 0.9, "x2": 0.1, "x3": 0.5}, dataset_path)
+    assert result is not None
+    assert isinstance(result["base_value"], float)
+
+
+def test_sample_local_explanation_returns_row_from_test_split(trained_tree_model):
+    model_path, dataset_path = trained_tree_model
+    result = sample_local_explanation(model_path, dataset_path, "target", "classification", None, seed=0)
+    assert result is not None
+    assert set(result["row_values"]) == {"x1", "x2", "x3"}
+    assert result["test_set_size"] == 30  # 20% of 150 rows
+    assert isinstance(result["contributions"], list) and result["contributions"]
+    assert base64.b64decode(result["waterfall_plot_base64"])[:4] == _PNG_HEADER
+    assert isinstance(result["base_value"], float)
+    assert result["prediction"] is not None
+
+
+def test_sample_local_explanation_is_reproducible_with_seed(trained_tree_model):
+    model_path, dataset_path = trained_tree_model
+    first = sample_local_explanation(model_path, dataset_path, "target", "classification", None, seed=0)
+    second = sample_local_explanation(model_path, dataset_path, "target", "classification", None, seed=0)
+    assert first["row_values"] == second["row_values"]
+
+
+def test_sample_local_explanation_varies_with_different_seed(trained_tree_model):
+    model_path, dataset_path = trained_tree_model
+    first = sample_local_explanation(model_path, dataset_path, "target", "classification", None, seed=0)
+    second = sample_local_explanation(model_path, dataset_path, "target", "classification", None, seed=1)
+    assert first["row_values"] != second["row_values"]
+
+
+def test_sample_local_explanation_returns_none_on_missing_artifact(tmp_path):
+    result = sample_local_explanation(
+        str(tmp_path / "missing.joblib"), str(tmp_path / "missing.csv"), "target", "classification", None
+    )
+    assert result is None

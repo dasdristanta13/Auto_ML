@@ -48,7 +48,7 @@ from src.profiling import preview
 from src.profiling.heuristics import target_too_high_cardinality_for_classification
 from src.llm.tracing import read_trace
 from src.state import PipelineState, new_state
-from src.training.dispatch import explain_prediction, load_model_schema, predict_one
+from src.training.dispatch import explain_prediction, load_model_schema, predict_one, sample_local_explanation
 
 UPLOAD_DIR = Path("data/uploads")
 
@@ -734,8 +734,35 @@ def get_explainability(run_id: str, _session: dict[str, Any] = Depends(require_s
         "summary_plot": None,
         "bar_plot": None,
         "dependence_plots": [],
+        "fidelity_r2": None,
+        "background_sample_size": 0,
+        "key_insights": [],
     }
     return _json_safe(explainability)
+
+
+@app.get("/api/runs/{run_id}/explainability/local-example")
+def get_local_explanation(
+    run_id: str, seed: Optional[int] = None, _session: dict[str, Any] = Depends(require_session)
+) -> dict[str, Any]:
+    """One SHAP explanation for a row sampled from the real held-out test
+    split, computed on demand (not precomputed) so each call/"View another
+    example" click can return a different row."""
+    entry = _get_entry(run_id)
+    model_path = _require_model_path(entry)
+    state = entry["state"]
+    task_spec = state.get("task_spec", {}) or {}
+    result = sample_local_explanation(
+        model_path,
+        state.get("transformed_dataset_path", ""),
+        task_spec.get("target_column"),
+        task_spec.get("task_type"),
+        task_spec.get("time_column"),
+        seed,
+    )
+    if result is None:
+        return _json_safe({"available": False, "note": "Local explanation isn't available for this run."})
+    return _json_safe({"available": True, **result})
 
 
 class PredictRequest(BaseModel):

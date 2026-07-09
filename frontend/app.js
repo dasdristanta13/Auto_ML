@@ -160,6 +160,7 @@ let selectedFile = null;
 let lastRun = null;
 let predictFormLoadedFor = null;
 let explainabilityLoadedFor = null;
+let lastExplainabilityData = null;
 let currentDatasetRunId = null;
 let previewState = { page: 1, pageSize: 50, sortBy: null, sortDir: "asc", search: "" };
 let previewColumns = [];
@@ -1006,8 +1007,12 @@ function openRun(runId) {
   $("trace-body").textContent = "";
   predictFormLoadedFor = null;
   explainabilityLoadedFor = null;
+  lastExplainabilityData = null;
   $("explainability-narrative").textContent = "";
   $("explainability-plots").innerHTML = "";
+  $("explainability-stat-cards").innerHTML = "";
+  $("explainability-insights-card").classList.add("hidden");
+  $("explainability-subtabs-wrap").classList.add("hidden");
   $("explainability-empty").classList.add("hidden");
   $("predict-result").classList.add("hidden");
   chatPendingQuestion = null;
@@ -2561,6 +2566,9 @@ async function loadExplainabilityTab(run) {
   if (!(run.best_model || {}).model_path) {
     $("explainability-narrative").textContent = "";
     $("explainability-plots").innerHTML = "";
+    $("explainability-stat-cards").innerHTML = "";
+    $("explainability-insights-card").classList.add("hidden");
+    $("explainability-subtabs-wrap").classList.add("hidden");
     $("explainability-empty").textContent = "No trained model is available for this run yet.";
     $("explainability-empty").classList.remove("hidden");
     return;
@@ -2570,13 +2578,19 @@ async function loadExplainabilityTab(run) {
 
   $("explainability-narrative").textContent = "";
   $("explainability-plots").innerHTML = "";
+  $("explainability-stat-cards").innerHTML = "";
+  $("explainability-insights-card").classList.add("hidden");
+  $("explainability-subtabs-wrap").classList.add("hidden");
   $("explainability-empty").textContent = "Loading explainability data…";
   $("explainability-empty").classList.remove("hidden");
 
   try {
     const data = await (await authFetch(`/api/runs/${run.run_id}/explainability`)).json();
-    renderExplainability(data);
+    lastExplainabilityData = data;
+    renderExplainability(run, data);
   } catch {
+    $("explainability-stat-cards").innerHTML = "";
+    $("explainability-insights-card").classList.add("hidden");
     $("explainability-empty").textContent = "Could not load explainability data for this run.";
     $("explainability-empty").classList.remove("hidden");
     explainabilityLoadedFor = null;
@@ -2591,21 +2605,91 @@ function renderShapPlot(plot) {
     </div>`;
 }
 
-function renderExplainability(data) {
+function renderExplainabilityStatCards(run, data) {
+  const spec = run.task_spec || {};
+  const best = run.best_model || {};
+  const metric = spec.metric;
+  const bestScore = metric && best.metrics && metric in best.metrics ? Number(best.metrics[metric]).toFixed(3) : null;
+
+  const cards = [
+    {
+      icon: "shield", tint: "green", label: "Model Fidelity (R²)",
+      value: data.fidelity_r2 != null ? data.fidelity_r2.toFixed(2) : "—",
+      sub: "SHAP values explain model output variance",
+    },
+    {
+      icon: "db", tint: "violet", label: "Samples Analyzed",
+      value: data.background_sample_size ? data.background_sample_size.toLocaleString() : "—",
+      sub: "sampled from the training data",
+    },
+    {
+      icon: "cpu", tint: "violet", label: "Model",
+      value: best.candidate_name || "—",
+      sub: bestScore ? `${metric}: ${bestScore}` : "",
+    },
+    {
+      icon: "grid", tint: "amber", label: "Target",
+      value: spec.target_column || "—",
+      sub: spec.task_type || "",
+    },
+  ];
+
+  $("explainability-stat-cards").innerHTML = cards
+    .map(
+      (c) => `
+      <div class="stat-card">
+        <span class="stat-icon ${c.tint}">${ICONS[c.icon]}</span>
+        <div class="stat-body">
+          <div class="stat-label">${escapeHtml(c.label)}</div>
+          <div class="stat-value">${escapeHtml(String(c.value))}</div>
+          <div class="stat-sub">${escapeHtml(c.sub)}</div>
+        </div>
+      </div>`
+    )
+    .join("");
+}
+
+const KEY_INSIGHT_TONE = { driver: "success", risk: "warning", minor: "info" };
+const KEY_INSIGHT_ICON = { driver: "check", risk: "warning", minor: "sparkle" };
+
+function renderKeyInsights(data) {
+  const card = $("explainability-insights-card");
+  const insights = data.key_insights || [];
+  if (!insights.length) {
+    card.classList.add("hidden");
+    return;
+  }
+  card.classList.remove("hidden");
+  $("explainability-insights-list").innerHTML = insights
+    .map(
+      (i) => `<li class="insight-${KEY_INSIGHT_TONE[i.tone] || "info"}">${ICONS[KEY_INSIGHT_ICON[i.tone]] || ICONS.sparkle}<span>${escapeHtml(i.message)}</span></li>`
+    )
+    .join("");
+}
+
+function renderExplainability(run, data) {
   const empty = $("explainability-empty");
   const plotsEl = $("explainability-plots");
   const narrative = $("explainability-narrative");
+  const subtabsWrap = $("explainability-subtabs-wrap");
 
   const hasPlots = data.summary_plot || data.bar_plot || (data.dependence_plots && data.dependence_plots.length);
   if (data.method === "unavailable" || !hasPlots) {
     plotsEl.innerHTML = "";
     narrative.textContent = "";
+    $("explainability-stat-cards").innerHTML = "";
+    $("explainability-insights-card").classList.add("hidden");
+    subtabsWrap.classList.add("hidden");
     empty.textContent = data.note || "SHAP-based impact analysis isn't available for this run.";
     empty.classList.remove("hidden");
     return;
   }
   empty.classList.add("hidden");
+  subtabsWrap.classList.remove("hidden");
   narrative.textContent = data.narrative || "";
+
+  renderExplainabilityStatCards(run, data);
+  renderKeyInsights(data);
 
   let html = "";
   if (data.bar_plot) html += renderShapPlot(data.bar_plot);
@@ -2615,6 +2699,86 @@ function renderExplainability(data) {
   }
   plotsEl.innerHTML = html;
 }
+
+const EXPL_SUBTABS = ["global", "local"];
+
+function switchExplainabilitySubTab(name) {
+  for (const tab of EXPL_SUBTABS) {
+    const isActive = tab === name;
+    $(`expl-subtab-${tab}-btn`).classList.toggle("active", isActive);
+    $(`expl-subtab-${tab}-btn`).setAttribute("aria-selected", String(isActive));
+    $(`expl-subtab-${tab}-panel`).classList.toggle("hidden", !isActive);
+  }
+  if (name === "local" && lastRun) loadLocalExplanation(lastRun);
+}
+for (const tab of EXPL_SUBTABS) {
+  $(`expl-subtab-${tab}-btn`).addEventListener("click", () => switchExplainabilitySubTab(tab));
+}
+
+let localExplanationLoadedFor = null;
+
+async function loadLocalExplanation(run, { force = false } = {}) {
+  if (!(run.best_model || {}).model_path) {
+    $("local-example-empty").textContent = "No trained model is available for this run yet.";
+    $("local-example-empty").classList.remove("hidden");
+    return;
+  }
+  if (localExplanationLoadedFor === run.run_id && !force) return;
+  localExplanationLoadedFor = run.run_id;
+
+  $("local-example-waterfall").innerHTML = "";
+  $("local-example-method-card").classList.add("hidden");
+  $("local-example-empty").textContent = "Loading an example…";
+  $("local-example-empty").classList.remove("hidden");
+
+  try {
+    const data = await (await authFetch(`/api/runs/${run.run_id}/explainability/local-example`)).json();
+    renderLocalExplanation(run, data);
+  } catch {
+    $("local-example-empty").textContent = "Could not load a local example for this run.";
+    $("local-example-empty").classList.remove("hidden");
+    localExplanationLoadedFor = null;
+  }
+}
+
+function renderLocalExplanation(run, data) {
+  const empty = $("local-example-empty");
+  const waterfall = $("local-example-waterfall");
+  const methodCard = $("local-example-method-card");
+
+  if (!data.available) {
+    waterfall.innerHTML = "";
+    methodCard.classList.add("hidden");
+    empty.textContent = data.note || "Local explanation isn't available for this run.";
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+
+  $("local-example-headline").textContent = `Prediction: ${data.prediction}`;
+  waterfall.innerHTML = data.waterfall_plot_base64
+    ? `<div class="shap-plot"><img src="data:image/png;base64,${data.waterfall_plot_base64}" alt="Waterfall plot of this example's SHAP contributions" /><p class="shap-plot-caption">${escapeHtml(WATERFALL_CAPTION)}</p></div>`
+    : `<p class="muted small">A waterfall plot could not be generated for this example.</p>`;
+
+  const explainerLabel = { tree: "Tree", linear: "Linear", kernel: "Kernel" }[(lastExplainabilityData || {}).method] || "—";
+  const spec = run.task_spec || {};
+  const methodRows = [
+    ["Explainer", explainerLabel],
+    ["Model", (run.best_model || {}).candidate_name || "—"],
+    ["Test set size", data.test_set_size ?? "—"],
+    ["Sampled for SHAP", (lastExplainabilityData || {}).background_sample_size ?? "—"],
+    ["Baseline (average)", data.base_value != null ? data.base_value.toFixed(3) : "—"],
+    ["Target", spec.target_column || "—"],
+  ];
+  $("local-example-method-list").innerHTML = methodRows
+    .map(([label, value]) => `<div class="method-row"><span class="label">${escapeHtml(label)}</span><span class="mono">${escapeHtml(String(value))}</span></div>`)
+    .join("");
+  methodCard.classList.remove("hidden");
+}
+
+$("local-example-next-btn").addEventListener("click", () => {
+  if (lastRun) loadLocalExplanation(lastRun, { force: true });
+});
 
 /* ================= activity feed ================= */
 
@@ -2694,7 +2858,10 @@ function switchRunTab(name) {
   }
   $("run-rail").classList.toggle("hidden", name !== "overview");
   $("run-layout").classList.toggle("no-rail", name !== "overview");
-  if (name === "explainability" && lastRun) loadExplainabilityTab(lastRun);
+  if (name === "explainability" && lastRun) {
+    switchExplainabilitySubTab("global");
+    loadExplainabilityTab(lastRun);
+  }
 }
 for (const tab of RUN_TABS) {
   $(`tab-${tab}-btn`).addEventListener("click", () => switchRunTab(tab));

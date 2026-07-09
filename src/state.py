@@ -73,6 +73,7 @@ class FeatureImportance(BaseModel):
 class FeatureImpact(BaseModel):
     feature: str
     mean_abs_shap: float
+    mean_signed_shap: float = 0.0
 
 
 class ShapPlot(BaseModel):
@@ -80,6 +81,11 @@ class ShapPlot(BaseModel):
     feature: Optional[str] = None
     image_base64: str
     caption: Optional[str] = None
+
+
+class KeyInsight(BaseModel):
+    tone: Literal["driver", "risk", "minor"]
+    message: str
 
 
 class ExplainabilityResult(BaseModel):
@@ -90,6 +96,9 @@ class ExplainabilityResult(BaseModel):
     summary_plot: Optional[ShapPlot] = None
     bar_plot: Optional[ShapPlot] = None
     dependence_plots: list[ShapPlot] = Field(default_factory=list)
+    fidelity_r2: Optional[float] = None
+    background_sample_size: int = 0
+    key_insights: list[KeyInsight] = Field(default_factory=list)
 
 
 class CVMetric(BaseModel):

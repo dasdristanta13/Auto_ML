@@ -17,6 +17,16 @@ _CAPTIONS_JSON_SCHEMA = {
         "summary_plot_caption": {"type": "string"},
         "bar_plot_caption": {"type": "string"},
         "dependence_plot_captions": {"type": "object"},
+        "key_insights": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "tone": {"type": "string", "enum": ["driver", "risk", "minor"]},
+                    "message": {"type": "string"},
+                },
+            },
+        },
     },
 }
 
@@ -28,6 +38,7 @@ def explainability_node(state: PipelineState) -> PipelineState:
         return state
 
     result = compute_explainability(model_path, state.get("transformed_dataset_path", ""))
+    result.setdefault("key_insights", [])
 
     if result["method"] != "unavailable":
         client = get_llm_client()
@@ -66,6 +77,7 @@ def explainability_node(state: PipelineState) -> PipelineState:
                 dependence_captions = captions.get("dependence_plot_captions") or {}
                 for plot in dependence_plots:
                     plot["caption"] = dependence_captions.get(plot["feature"])
+                result["key_insights"] = captions.get("key_insights") or []
             except Exception as exc:  # noqa: BLE001 - captions are enrichment, never fatal
                 state.setdefault("errors", []).append(f"explainability: plot captions unavailable: {exc}")
 

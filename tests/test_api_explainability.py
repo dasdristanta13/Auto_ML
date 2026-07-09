@@ -46,6 +46,7 @@ def _make_run_with_model(tmp_path, monkeypatch, run_id="run-1", explainability=N
             "state": {
                 "dataset_path": str(dataset_path),
                 "transformed_dataset_path": str(dataset_path),
+                "task_spec": {"target_column": "target", "task_type": "classification", "time_column": None},
                 "best_model": best_model,
             },
             "status": "completed",
@@ -85,6 +86,9 @@ def test_get_explainability_default_when_not_yet_computed(tmp_path, monkeypatch)
     assert result["summary_plot"] is None
     assert result["bar_plot"] is None
     assert result["dependence_plots"] == []
+    assert result["fidelity_r2"] is None
+    assert result["background_sample_size"] == 0
+    assert result["key_insights"] == []
 
 
 def test_get_explainability_404_without_trained_model(monkeypatch):
@@ -115,3 +119,27 @@ def test_predict_endpoint_includes_waterfall_plot(tmp_path, monkeypatch):
     result = client.post("/api/runs/run-1/predict", json={"values": {"x1": 0.5, "x2": 0.5}}).json()
     assert result["waterfall_plot_base64"] is not None
     assert base64.b64decode(result["waterfall_plot_base64"])[:4] == _PNG_HEADER
+
+
+def test_local_example_returns_available_row(tmp_path, monkeypatch):
+    _make_run_with_model(tmp_path, monkeypatch)
+    client = TestClient(server.app)
+    result = client.get("/api/runs/run-1/explainability/local-example?seed=0").json()
+    assert result["available"] is True
+    assert set(result["row_values"]) == {"x1", "x2"}
+    assert result["test_set_size"] == 30
+    assert isinstance(result["contributions"], list) and result["contributions"]
+
+
+def test_local_example_unavailable_without_trained_model(monkeypatch):
+    monkeypatch.setitem(
+        server._runs,
+        "run-2",
+        {
+            "state": {"best_model": {}}, "status": "running", "events": [], "filename": "d.csv",
+            "created_at": time.time(), "finished_at": None, "cancel_requested": False, "chat_history": [],
+        },
+    )
+    client = TestClient(server.app)
+    res = client.get("/api/runs/run-2/explainability/local-example")
+    assert res.status_code == 404

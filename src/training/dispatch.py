@@ -511,6 +511,41 @@ def _render_waterfall_plot(
         return None
 
 
+def _shap_fidelity_r2(
+    model, background: np.ndarray, values: np.ndarray, base_values: np.ndarray
+) -> Optional[float]:
+    """R² between the model's actual output and the SHAP reconstruction
+    (base value + sum of per-feature contributions) over the background
+    sample — a diagnostic of how well these SHAP values explain the model's
+    output. None when there's no single scalar output to compare against
+    (e.g. multiclass classification), or on any failure — this is a
+    diagnostic extra, never a reason to fail compute_explainability.
+
+    Different models' SHAP explainers reconstruct different quantities: sklearn's
+    bagged ensembles (e.g. RandomForest) reconstruct predict_proba() directly,
+    so base + sum(shap) lands in [0, 1] already. However, any model whose SHAP
+    additivity target is the pre-link score (margin/log-odds space) — including
+    linear models with a logit link (LogisticRegression) and boosting libraries
+    with a log-odds link (XGBoost, LightGBM, sklearn's GradientBoostingClassifier) —
+    must be corrected by applying a sigmoid before comparison against predict_proba(),
+    otherwise the raw margin yields a meaningless, wildly negative R² even when
+    the SHAP values perfectly reconstruct the model."""
+    try:
+        if hasattr(model, "predict_proba"):
+            proba = model.predict_proba(background)
+            if proba.ndim != 2 or proba.shape[1] != 2:
+                return None
+            model_output = proba[:, 1]
+        else:
+            model_output = model.predict(background)
+        reconstructed = base_values + values.sum(axis=1)
+        if hasattr(model, "predict_proba") and (reconstructed.min() < -1e-6 or reconstructed.max() > 1 + 1e-6):
+            reconstructed = 1.0 / (1.0 + np.exp(-reconstructed))
+        return float(r2_score(model_output, reconstructed))
+    except Exception:  # noqa: BLE001 - fidelity is a diagnostic extra, never fatal
+        return None
+
+
 def compute_explainability(model_path: str, transformed_dataset_path: str) -> dict[str, Any]:
     """Best-effort aggregate SHAP feature impact for the winning model,
     computed once after training (explainability_node). Never raises —
@@ -530,9 +565,14 @@ def compute_explainability(model_path: str, transformed_dataset_path: str) -> di
         explainer = _build_shap_explainer(model, background, feature_names)
         shap_values = explainer(background)
         values = _reduce_shap_values(np.asarray(shap_values.values))
+        base_values = _reduce_shap_base_values(np.asarray(shap_values.base_values))
         mean_abs = np.abs(values).mean(axis=0)
+        mean_signed = values.mean(axis=0)
+        fidelity_r2 = _shap_fidelity_r2(model, background, values, base_values)
 
-        ranked = sorted(zip(feature_names, mean_abs), key=lambda pair: pair[1], reverse=True)
+        ranked = sorted(
+            zip(feature_names, mean_abs, mean_signed), key=lambda triple: triple[1], reverse=True
+        )
         top_n = cfg["top_n_features"]
 
         try:
@@ -540,7 +580,7 @@ def compute_explainability(model_path: str, transformed_dataset_path: str) -> di
             summary_plot = _render_beeswarm_plot(explanation)
             bar_plot = _render_bar_plot(explanation)
             dependence_plots = _render_dependence_plots(
-                explanation, [name for name, _ in ranked], cfg["dependence_plot_top_n"]
+                explanation, [name for name, _, _ in ranked], cfg["dependence_plot_top_n"]
             )
         except Exception:  # noqa: BLE001 - a plotting failure must never blank feature_impact/method
             summary_plot, bar_plot, dependence_plots = None, None, []
@@ -548,13 +588,16 @@ def compute_explainability(model_path: str, transformed_dataset_path: str) -> di
         return {
             "method": _shap_method_label(explainer),
             "feature_impact": [
-                {"feature": name, "mean_abs_shap": round(float(value), 6)} for name, value in ranked[:top_n]
+                {"feature": name, "mean_abs_shap": round(float(abs_v), 6), "mean_signed_shap": round(float(signed_v), 6)}
+                for name, abs_v, signed_v in ranked[:top_n]
             ],
             "narrative": None,
             "note": None,
             "summary_plot": summary_plot,
             "bar_plot": bar_plot,
             "dependence_plots": dependence_plots,
+            "fidelity_r2": fidelity_r2,
+            "background_sample_size": int(len(background)),
         }
     except Exception as exc:  # noqa: BLE001 - explainability is best-effort, never fatal
         return {
@@ -565,6 +608,8 @@ def compute_explainability(model_path: str, transformed_dataset_path: str) -> di
             "summary_plot": None,
             "bar_plot": None,
             "dependence_plots": [],
+            "fidelity_r2": None,
+            "background_sample_size": 0,
         }
 
 
@@ -575,7 +620,7 @@ def explain_prediction(
     user-submitted prediction row, computed on demand (POST /predict).
     Returns None rather than raising when SHAP can't explain this
     estimator/input; on success returns {"contributions": [...],
-    "waterfall_plot_base64": Optional[str]}."""
+    "waterfall_plot_base64": Optional[str], "base_value": float}."""
     try:
         cfg = _explainability_config()
         bundle = joblib.load(model_path)
@@ -602,8 +647,58 @@ def explain_prediction(
         contributions = [{"feature": name, "shap_value": round(float(value), 6)} for name, value in ranked[:top_n]]
         waterfall_plot_base64 = _render_waterfall_plot(row_values, float(row_base_value), row_data, feature_names)
 
-        return {"contributions": contributions, "waterfall_plot_base64": waterfall_plot_base64}
+        return {
+            "contributions": contributions,
+            "waterfall_plot_base64": waterfall_plot_base64,
+            "base_value": round(float(row_base_value), 6),
+        }
     except Exception:  # noqa: BLE001 - per-row explanation is best-effort
+        return None
+
+
+def sample_local_explanation(
+    model_path: str,
+    transformed_dataset_path: str,
+    target_column: str,
+    task_type: str,
+    time_column: Optional[str],
+    seed: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
+    """Best-effort SHAP explanation for one row sampled from the real
+    held-out test split, reproduced via the same deterministic _split()
+    used at training time (read-only — no leakage risk). Orchestrates the
+    existing predict_one/explain_prediction rather than re-deriving SHAP
+    logic. Returns None rather than raising when it can't explain this
+    estimator/split; a seed makes the sampled row reproducible, otherwise
+    a fresh row is picked each call (the "View another example" UX)."""
+    try:
+        df = load_dataset(transformed_dataset_path)
+        _, X_test, _, y_test = _split(df, target_column, task_type, time_column)
+        if X_test.empty:
+            return None
+
+        rng = np.random.default_rng(seed)
+        idx = int(rng.integers(0, len(X_test)))
+        row = X_test.iloc[idx]
+        row_values = {col: (None if pd.isna(val) else val) for col, val in row.items()}
+        actual = y_test.iloc[idx]
+
+        prediction_result = predict_one(model_path, row_values)
+        explanation = explain_prediction(model_path, row_values, transformed_dataset_path)
+        if explanation is None:
+            return None
+
+        return {
+            "row_values": row_values,
+            "actual_target": None if pd.isna(actual) else actual,
+            "prediction": prediction_result["prediction"],
+            "probabilities": prediction_result.get("probabilities"),
+            "contributions": explanation["contributions"],
+            "waterfall_plot_base64": explanation["waterfall_plot_base64"],
+            "base_value": explanation["base_value"],
+            "test_set_size": int(len(X_test)),
+        }
+    except Exception:  # noqa: BLE001 - local explanation is best-effort
         return None
 
 
