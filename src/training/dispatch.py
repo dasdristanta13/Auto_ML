@@ -608,7 +608,7 @@ def explain_prediction(
     user-submitted prediction row, computed on demand (POST /predict).
     Returns None rather than raising when SHAP can't explain this
     estimator/input; on success returns {"contributions": [...],
-    "waterfall_plot_base64": Optional[str]}."""
+    "waterfall_plot_base64": Optional[str], "base_value": float}."""
     try:
         cfg = _explainability_config()
         bundle = joblib.load(model_path)
@@ -635,8 +635,58 @@ def explain_prediction(
         contributions = [{"feature": name, "shap_value": round(float(value), 6)} for name, value in ranked[:top_n]]
         waterfall_plot_base64 = _render_waterfall_plot(row_values, float(row_base_value), row_data, feature_names)
 
-        return {"contributions": contributions, "waterfall_plot_base64": waterfall_plot_base64}
+        return {
+            "contributions": contributions,
+            "waterfall_plot_base64": waterfall_plot_base64,
+            "base_value": round(float(row_base_value), 6),
+        }
     except Exception:  # noqa: BLE001 - per-row explanation is best-effort
+        return None
+
+
+def sample_local_explanation(
+    model_path: str,
+    transformed_dataset_path: str,
+    target_column: str,
+    task_type: str,
+    time_column: Optional[str],
+    seed: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
+    """Best-effort SHAP explanation for one row sampled from the real
+    held-out test split, reproduced via the same deterministic _split()
+    used at training time (read-only — no leakage risk). Orchestrates the
+    existing predict_one/explain_prediction rather than re-deriving SHAP
+    logic. Returns None rather than raising when it can't explain this
+    estimator/split; a seed makes the sampled row reproducible, otherwise
+    a fresh row is picked each call (the "View another example" UX)."""
+    try:
+        df = load_dataset(transformed_dataset_path)
+        _, X_test, _, y_test = _split(df, target_column, task_type, time_column)
+        if X_test.empty:
+            return None
+
+        rng = np.random.default_rng(seed)
+        idx = int(rng.integers(0, len(X_test)))
+        row = X_test.iloc[idx]
+        row_values = {col: (None if pd.isna(val) else val) for col, val in row.items()}
+        actual = y_test.iloc[idx]
+
+        prediction_result = predict_one(model_path, row_values)
+        explanation = explain_prediction(model_path, row_values, transformed_dataset_path)
+        if explanation is None:
+            return None
+
+        return {
+            "row_values": row_values,
+            "actual_target": None if pd.isna(actual) else actual,
+            "prediction": prediction_result["prediction"],
+            "probabilities": prediction_result.get("probabilities"),
+            "contributions": explanation["contributions"],
+            "waterfall_plot_base64": explanation["waterfall_plot_base64"],
+            "base_value": explanation["base_value"],
+            "test_set_size": int(len(X_test)),
+        }
+    except Exception:  # noqa: BLE001 - local explanation is best-effort
         return None
 
 

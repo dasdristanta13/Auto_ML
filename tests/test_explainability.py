@@ -24,6 +24,7 @@ from src.training.dispatch import (
     _shap_plot_explanation,
     compute_explainability,
     explain_prediction,
+    sample_local_explanation,
 )
 
 _PNG_HEADER = b"\x89PNG"
@@ -316,3 +317,43 @@ def test_render_beeswarm_plot_closes_figure_on_failure(monkeypatch):
     result = _render_beeswarm_plot(explanation)
     assert result is None
     assert set(plt.get_fignums()) == before
+
+
+def test_explain_prediction_includes_base_value(trained_tree_model):
+    model_path, dataset_path = trained_tree_model
+    result = explain_prediction(model_path, {"x1": 0.9, "x2": 0.1, "x3": 0.5}, dataset_path)
+    assert result is not None
+    assert isinstance(result["base_value"], float)
+
+
+def test_sample_local_explanation_returns_row_from_test_split(trained_tree_model):
+    model_path, dataset_path = trained_tree_model
+    result = sample_local_explanation(model_path, dataset_path, "target", "classification", None, seed=0)
+    assert result is not None
+    assert set(result["row_values"]) == {"x1", "x2", "x3"}
+    assert result["test_set_size"] == 30  # 20% of 150 rows
+    assert isinstance(result["contributions"], list) and result["contributions"]
+    assert base64.b64decode(result["waterfall_plot_base64"])[:4] == _PNG_HEADER
+    assert isinstance(result["base_value"], float)
+    assert result["prediction"] is not None
+
+
+def test_sample_local_explanation_is_reproducible_with_seed(trained_tree_model):
+    model_path, dataset_path = trained_tree_model
+    first = sample_local_explanation(model_path, dataset_path, "target", "classification", None, seed=0)
+    second = sample_local_explanation(model_path, dataset_path, "target", "classification", None, seed=0)
+    assert first["row_values"] == second["row_values"]
+
+
+def test_sample_local_explanation_varies_with_different_seed(trained_tree_model):
+    model_path, dataset_path = trained_tree_model
+    first = sample_local_explanation(model_path, dataset_path, "target", "classification", None, seed=0)
+    second = sample_local_explanation(model_path, dataset_path, "target", "classification", None, seed=1)
+    assert first["row_values"] != second["row_values"]
+
+
+def test_sample_local_explanation_returns_none_on_missing_artifact(tmp_path):
+    result = sample_local_explanation(
+        str(tmp_path / "missing.joblib"), str(tmp_path / "missing.csv"), "target", "classification", None
+    )
+    assert result is None
