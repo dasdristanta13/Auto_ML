@@ -25,6 +25,7 @@ const ICONS = {
   sparkle: '<svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9Z"/></svg>',
   shield: SVG('<path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10Z"/>'),
   bulb: SVG('<path d="M9 18h6M10 22h4M12 2a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 2Z"/>'),
+  chevron: SVG('<path d="m6 9 6 6 6-6"/>'),
 };
 
 const STAGES = [
@@ -1093,7 +1094,7 @@ function render(run) {
   renderQuality(run);
   renderInsights(run);
   renderResults(run);
-  renderTuningTrend(run);
+  renderExperimentsTab(run);
   renderFeatureImportance(run);
   renderActivity(run);
   renderReport(run);
@@ -1149,7 +1150,7 @@ function renderChampionBanner(run) {
   $("champion-download-btn").classList.toggle("hidden", !run.report);
 }
 
-$("champion-compare-btn").addEventListener("click", () => switchRunTab("models"));
+$("champion-compare-btn").addEventListener("click", () => switchRunTab("experiments"));
 $("champion-download-btn").addEventListener("click", (e) => {
   e.preventDefault();
   $("export-report-btn").click();
@@ -1178,9 +1179,9 @@ function renderJourneyCondensed(run) {
   }).join("");
 }
 
-$("journey-view-pipeline-btn").addEventListener("click", () => switchRunTab("pipeline"));
+$("journey-view-pipeline-btn").addEventListener("click", () => switchRunTab("experiments"));
 
-$("nextstep-compare-btn").addEventListener("click", () => switchRunTab("models"));
+$("nextstep-compare-btn").addEventListener("click", () => switchRunTab("experiments"));
 $("nextstep-artifacts-btn").addEventListener("click", () => switchRunTab("artifacts"));
 $("nextstep-share-btn").addEventListener("click", () => $("share-btn").click());
 
@@ -1246,7 +1247,7 @@ function renderLeaderboardCondensed(run) {
   $("leaderboard-condensed-table").innerHTML = html;
 }
 
-$("leaderboard-view-all-btn").addEventListener("click", () => switchRunTab("models"));
+$("leaderboard-view-all-btn").addEventListener("click", () => switchRunTab("experiments"));
 
 /* ================= model rationale (why this / why not others) ================= */
 
@@ -1421,6 +1422,7 @@ function renderStageTracker(run) {
   const tracker = $("stage-tracker");
   tracker.innerHTML = "";
   const terminal = ["completed", "failed", "cancelled"].includes(run.status);
+  tracker.classList.toggle("compact", terminal);
   $("pipeline-sub").textContent = terminal
     ? `finished in ${formatDuration(run.elapsed_seconds)}`
     : run.status === "awaiting_confirmation"
@@ -1921,12 +1923,41 @@ function renderDatasetSummary(run) {
 
 /* ================= class distribution (classification targets) ================= */
 
+function classEntriesFor(target, rowCount) {
+  if (target && target.top_values) {
+    return Object.entries(target.top_values).sort((a, b) => b[1] - a[1]);
+  }
+  // src/profiling/profile.py only populates top_values for categorical
+  // columns (or, in the wide-dataset path, low-cardinality numeric ones) —
+  // a numeric 0/1-encoded binary target in a normal dataset never gets one.
+  // Mirror src/profiling/heuristics.py's minority_ratio() fallback, which
+  // already reads numeric_summary.mean as the positive rate for exactly
+  // this case, so the donut still renders for the common binary-int target.
+  // Guard strictly: this is only valid for a literal {0, 1} encoding (not
+  // any binary numeric encoding with a mean in [0, 1], e.g. {-1, 1}), and
+  // only when there are no nulls (numeric_summary.mean is computed over
+  // dropna()'d values, so nulls would otherwise be silently folded into
+  // the "negative" class).
+  const summary = target && target.numeric_summary;
+  const mean = summary ? summary.mean : null;
+  const isZeroOneEncoded = summary && summary.min === 0 && summary.max === 1;
+  const hasNoNulls = target && target.null_rate === 0;
+  if (target && target.n_unique === 2 && rowCount && mean != null && isZeroOneEncoded && hasNoNulls) {
+    const positives = Math.round(mean * rowCount);
+    const negatives = rowCount - positives;
+    if (positives > 0 && negatives > 0) {
+      return [["1", positives], ["0", negatives]].sort((a, b) => b[1] - a[1]);
+    }
+  }
+  return [];
+}
+
 function renderClassDistribution(run) {
   const card = $("classdist-card");
   const spec = run.task_spec || {};
   const confirmed = (run.stages_done || []).includes("confirm");
   const target = (run.profile_columns || []).find((c) => c.name === spec.target_column);
-  const entries = target && target.top_values ? Object.entries(target.top_values).sort((a, b) => b[1] - a[1]) : [];
+  const entries = classEntriesFor(target, (run.profile_summary || {}).row_count);
   if (spec.task_type !== "classification" || !confirmed || entries.length < 2) {
     card.classList.add("hidden");
     return;
@@ -2008,16 +2039,91 @@ function renderQuality(run) {
     .join("");
 }
 
+/* ================= experiments tab ================= */
+
+function renderExperimentsTab(run) {
+  renderExperimentsStatCards(run);
+  renderExperimentsBarChart(run);
+  renderExperimentsTrend(run);
+  renderExperimentsTable(run);
+  renderExperimentsDonuts(run);
+  renderExperimentsBestPanel(run);
+}
+
+function renderExperimentsStatCards(run) {
+  const results = run.training_results || [];
+  const best = run.best_model || {};
+  const metric = (run.task_spec || {}).metric;
+  const totalTrials = results.reduce((sum, r) => sum + (r.tuning?.trials_done || 1), 0);
+  const avgDuration = results.length
+    ? results.reduce((sum, r) => sum + (r.duration_seconds || 0), 0) / results.length
+    : 0;
+  const totalDuration = results.reduce((sum, r) => sum + (r.duration_seconds || 0), 0);
+  const bestCv = metric && best.cv_metrics && best.cv_metrics[metric];
+  const bestScore = bestCv ? bestCv.mean : (metric && best.metrics && metric in best.metrics ? Number(best.metrics[metric]) : null);
+
+  const cards = [
+    { icon: "layers", tint: "violet", label: "Total Experiments", value: String(totalTrials), sub: "trials across all candidates" },
+    { icon: "grid", tint: "violet", label: "Models Evaluated", value: String(results.length), sub: "unique candidates" },
+    { icon: "trophy", tint: "amber", label: `Best ${metric ? metric.toUpperCase() : "Score"}${bestCv ? " (CV)" : ""}`,
+      value: bestScore != null ? bestScore.toFixed(3) : "—", sub: escapeHtml(best.candidate_name || "—") },
+    { icon: "clock", tint: "green", label: "Avg. Training Time", value: formatDuration(avgDuration), sub: "per candidate" },
+    { icon: "cpu", tint: "green", label: "Total Compute Time", value: formatDuration(totalDuration), sub: "total wall time" },
+  ];
+
+  $("exp-stat-cards").innerHTML = cards
+    .map(
+      (c) => `
+      <div class="stat-card">
+        <span class="stat-icon ${c.tint}">${ICONS[c.icon]}</span>
+        <div class="stat-body">
+          <div class="stat-label">${escapeHtml(c.label)}</div>
+          <div class="stat-value">${c.value}</div>
+          <div class="stat-sub">${c.sub}</div>
+        </div>
+      </div>`
+    )
+    .join("");
+}
+
+function renderExperimentsBarChart(run) {
+  const results = (run.training_results || []).filter((r) => r.status === "succeeded");
+  const metric = (run.task_spec || {}).metric;
+  const bestId = (run.best_model || {}).run_id;
+  const card = $("exp-bar-chart").closest(".card");
+  if (!results.length || !metric) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+
+  const lowerIsBetter = metric === "rmse" || metric === "mae";
+  const withMetric = results.filter((r) => r.metrics && metric in r.metrics);
+  const sorted = [...withMetric].sort((a, b) =>
+    lowerIsBetter ? a.metrics[metric] - b.metrics[metric] : b.metrics[metric] - a.metrics[metric]
+  );
+  $("exp-bar-sub").textContent = `ranked by ${metric} (held-out)`;
+
+  const values = sorted.map((r) => Number(r.metrics[metric]));
+  const allUnitRange = values.every((v) => v >= 0 && v <= 1);
+  const scaleMax = allUnitRange ? 1 : Math.max(...values) * 1.15;
+
+  $("exp-bar-chart").innerHTML = sorted
+    .map((r) => {
+      const value = Number(r.metrics[metric]);
+      const pct = Math.max((value / scaleMax) * 100, 1);
+      const isBest = r.run_id === bestId;
+      return `
+      <div class="exp-bar-col" title="${escapeHtml(r.candidate_name)}: ${value.toFixed(3)}">
+        <span class="exp-bar-value">${value.toFixed(3)}</span>
+        <div class="exp-bar-track"><div class="exp-bar-fill ${isBest ? "champion" : ""}" style="height:${pct.toFixed(1)}%"></div></div>
+        <span class="exp-bar-name">${escapeHtml(r.candidate_name)}</span>
+      </div>`;
+    })
+    .join("");
+}
+
 /* ================= results table ================= */
 
 function renderResults(run) {
   const results = run.training_results || [];
-  const card = $("results-card");
-  if (!results.length) { card.classList.add("hidden"); return; }
-  card.classList.remove("hidden");
-
-  const metric = (run.task_spec || {}).metric;
-  $("results-sub").textContent = metric ? `ranked by ${metric}` : "";
 
   const cvConfig = run.cv_config || {};
   const cvChip = $("cv-config-chip");
@@ -2058,23 +2164,6 @@ function renderResults(run) {
   } else {
     fsChip.classList.add("hidden");
   }
-
-  const metricNames = [...new Set(results.flatMap((r) => Object.keys(r.metrics || {})))];
-  const bestId = (run.best_model || {}).run_id;
-  const zebra = results.length > 15;
-  const hasCv = metric && results.some((r) => r.cv_metrics && metric in r.cv_metrics);
-
-  let html = `<tr><th>Candidate</th><th>Status</th>${metricNames.map((m) => `<th>${m}</th>`).join("")}${hasCv ? `<th>CV ${escapeHtml(metric)}</th>` : ""}</tr>`;
-  for (const r of results) {
-    const isBest = r.run_id === bestId;
-    html += `<tr class="${isBest ? "best" : ""} ${zebra ? "zebra" : ""}">
-      <td>${escapeHtml(r.candidate_name)}${isBest ? '<span class="winner-tag">★ BEST</span>' : ""}</td>
-      <td>${escapeHtml(r.status.replaceAll("_", " "))}${r.error ? errorDisclosure(r.error) : ""}</td>
-      ${metricNames.map((m) => `<td class="num">${r.metrics && m in r.metrics ? Number(r.metrics[m]).toFixed(4) : "—"}</td>`).join("")}
-      ${hasCv ? `<td class="num">${cvCell(r, metric)}</td>` : ""}
-    </tr>`;
-  }
-  $("results-table").innerHTML = html;
 }
 
 function cvCell(result, metric) {
@@ -2085,67 +2174,288 @@ function cvCell(result, metric) {
   return `<span title="${result.cv_folds}-fold cross-validation">${cv.mean.toFixed(4)} ± ${cv.std.toFixed(3)}</span>`;
 }
 
-/* ================= tuning trend chart ================= */
+/* ================= experiment trend chart ================= */
 
-function renderTuningTrend(run) {
-  const card = $("tuning-card");
-  const best = run.best_model || {};
-  const t = best.tuning || {};
-  const history = t.history || [];
-  if (!t.enabled || history.length < 2) {
-    card.classList.add("hidden");
+const EXP_TREND_COLOR_KEYS = ["--cat-1", "--cat-2", "--cat-3", "--cat-4", "--cat-5", "--cat-6", "--cat-7", "--cat-8"];
+
+function renderExperimentsTrend(run) {
+  const results = run.training_results || [];
+  const bestId = (run.best_model || {}).run_id;
+  const tuned = results.filter((r) => r.tuning && r.tuning.enabled && (r.tuning.history || []).length > 1);
+
+  $("exp-trend-empty").classList.toggle("hidden", tuned.length > 0);
+  $("exp-trend-chart").classList.toggle("hidden", tuned.length === 0);
+  $("exp-trend-legend").classList.toggle("hidden", tuned.length === 0);
+  if (!tuned.length) {
+    $("exp-trend-sub").textContent = "";
     return;
   }
-  card.classList.remove("hidden");
 
-  const direction = t.lower_is_better ? "lower is better" : "higher is better";
-  $("tuning-sub").textContent = `${best.candidate_name} · ${history.length} trials · ${t.metric} (${direction})`;
+  // Stable partition: pull the champion (if present) to the front so it can
+  // never be pushed into the overflow fold just because of dispatch order.
+  const champFirst = [...tuned].sort((a, b) => (a.run_id === bestId ? -1 : 0) - (b.run_id === bestId ? -1 : 0));
+  const named = champFirst.slice(0, 8);
+  const overflow = champFirst.slice(8);
+  $("exp-trend-sub").textContent = `best-so-far score per trial · ${tuned.length} of ${results.length} candidate(s) shown`;
 
-  // geometry: one x slot per trial, y spans the observed score range with headroom
-  const W = 520, H = 190, padL = 46, padR = 14, padT = 12, padB = 30;
-  const scores = history.map((h) => h.score).concat(history.map((h) => h.best_score));
-  let lo = Math.min(...scores), hi = Math.max(...scores);
+  const styles = getComputedStyle(document.documentElement);
+  const palette = EXP_TREND_COLOR_KEYS.map((k) => styles.getPropertyValue(k).trim());
+
+  const W = 680, H = 240, padL = 50, padR = 16, padT = 14, padB = 30;
+  const maxTrials = Math.max(...tuned.map((r) => r.tuning.history.length));
+  const allScores = tuned.flatMap((r) => r.tuning.history.map((h) => h.best_score));
+  let lo = Math.min(...allScores), hi = Math.max(...allScores);
   if (hi - lo < 1e-9) { hi += 0.001; lo -= 0.001; }
   const span = hi - lo;
   lo -= span * 0.08; hi += span * 0.08;
-  const x = (i) => padL + (history.length === 1 ? 0 : (i / (history.length - 1)) * (W - padL - padR));
+  const x = (i) => padL + (maxTrials <= 1 ? 0 : (i / (maxTrials - 1)) * (W - padL - padR));
   const y = (v) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
 
   const gridValues = [lo + (hi - lo) * 0.1, lo + (hi - lo) * 0.5, lo + (hi - lo) * 0.9];
   const grid = gridValues
-    .map(
-      (v) => `
+    .map((v) => `
       <line x1="${padL}" y1="${y(v)}" x2="${W - padR}" y2="${y(v)}" class="tt-grid"></line>
-      <text x="${padL - 6}" y="${y(v) + 3}" class="tt-axis" text-anchor="end">${v.toFixed(3)}</text>`
-    )
+      <text x="${padL - 6}" y="${y(v) + 3}" class="tt-axis" text-anchor="end">${v.toFixed(3)}</text>`)
     .join("");
 
-  const scoreLine = history.map((h, i) => `${x(i)},${y(h.score)}`).join(" ");
-  const bestLine = history.map((h, i) => `${x(i)},${y(h.best_score)}`).join(" ");
-  const dots = history
-    .map(
-      (h, i) => `
-      <circle cx="${x(i)}" cy="${y(h.score)}" r="3.5" class="tt-dot">
-        <title>${h.trial === 0 ? "Trial 0 (proposed baseline)" : `Trial ${h.trial}`} — ${t.metric}: ${h.score.toFixed(4)} (best so far ${h.best_score.toFixed(4)})</title>
-      </circle>`
-    )
-    .join("");
-  const last = history[history.length - 1];
-  const finalLabel = `<text x="${x(history.length - 1) - 6}" y="${y(last.best_score) - 8}" class="tt-final" text-anchor="end">${last.best_score.toFixed(4)}</text>`;
+  let linesSvg = "";
+  let finalLabel = "";
+  named.forEach((r, i) => {
+    const isBest = r.run_id === bestId;
+    const color = palette[i % palette.length];
+    const points = r.tuning.history.map((h, hi2) => `${x(hi2)},${y(h.best_score)}`).join(" ");
+    linesSvg += `<polyline points="${points}" class="tt-line ${isBest ? "champion" : ""}" style="stroke:${color}"></polyline>`;
+    if (isBest) {
+      const last = r.tuning.history[r.tuning.history.length - 1];
+      finalLabel = `<text x="${x(r.tuning.history.length - 1) - 6}" y="${y(last.best_score) - 8}" class="tt-final" text-anchor="end">${last.best_score.toFixed(4)}</text>`;
+    }
+  });
+  overflow.forEach((r) => {
+    const points = r.tuning.history.map((h, hi2) => `${x(hi2)},${y(h.best_score)}`).join(" ");
+    linesSvg += `<polyline points="${points}" class="tt-line other-fold"></polyline>`;
+  });
 
-  $("tuning-chart").innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Hyperparameter tuning: ${escapeHtml(t.metric)} per trial for ${escapeHtml(best.candidate_name || "the best model")}" style="width:100%;height:auto">
+  $("exp-trend-chart").innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Best-so-far tuning score per trial, one line per candidate" style="width:100%;height:auto">
       ${grid}
-      <polyline points="${bestLine}" class="tt-best-line" fill="none"></polyline>
-      <polyline points="${scoreLine}" class="tt-score-line" fill="none"></polyline>
-      ${dots}
+      ${linesSvg}
       ${finalLabel}
       <text x="${(padL + W - padR) / 2}" y="${H - 8}" class="tt-axis" text-anchor="middle">trial</text>
     </svg>`;
 
-  $("tuning-legend").innerHTML = `
-    <li><span class="tt-chip tt-chip-score"></span>per-trial score</li>
-    <li><span class="tt-chip tt-chip-best"></span>best so far</li>`;
+  $("exp-trend-legend").innerHTML = named
+    .map((r, i) => `<li><span class="tt-chip" style="background:${palette[i % palette.length]}"></span>${escapeHtml(r.candidate_name)}${r.run_id === bestId ? " (champion)" : ""}</li>`)
+    .join("") + (overflow.length ? `<li><span class="tt-chip" style="background:var(--text-secondary);opacity:0.5"></span>${overflow.length} other candidate(s)</li>` : "");
+}
+
+/* ================= experiments table ================= */
+
+function renderExperimentsTable(run) {
+  const results = run.training_results || [];
+  const metric = (run.task_spec || {}).metric;
+  const bestId = (run.best_model || {}).run_id;
+  const lowerIsBetter = metric === "rmse" || metric === "mae";
+  const metricNames = [...new Set(results.flatMap((r) => Object.keys(r.metrics || {})))];
+  const primary = metric && metricNames.includes(metric) ? metric : metricNames[0];
+  const secondary = metricNames.find((m) => m !== primary);
+  const hasCv = primary && results.some((r) => r.cv_metrics && primary in r.cv_metrics);
+
+  // Rank by the SAME value the primary column actually displays (CV mean
+  // when hasCv makes the column show cvCell's mean instead of the raw
+  // metric, else the raw metric) — sorting by the raw metric while
+  // displaying the CV mean produces a table that visibly contradicts its
+  // own "ranked by {primary}" sub-label whenever the held-out test score
+  // and the CV mean disagree on ordering (real, not hypothetical: seen on
+  // an actual pipeline run where CV-mean roc_auc for the champion was
+  // lower than two non-champion candidates' CV means, while its raw
+  // held-out score was still the highest). Found during Task 8 end-to-end
+  // verification against a real run — a fixture with raw==CV-mean by
+  // coincidence had masked this.
+  const rankValue = (r) => {
+    if (hasCv) {
+      const cv = r.cv_metrics && r.cv_metrics[primary];
+      return cv ? cv.mean : undefined;
+    }
+    return r.metrics && primary in r.metrics ? r.metrics[primary] : undefined;
+  };
+  const ranked = [...results].sort((a, b) => {
+    const aVal = rankValue(a), bVal = rankValue(b);
+    const aHas = aVal !== undefined, bHas = bVal !== undefined;
+    if (!aHas && !bHas) return 0;
+    if (!aHas) return 1;
+    if (!bHas) return -1;
+    return lowerIsBetter ? aVal - bVal : bVal - aVal;
+  });
+
+  $("exp-table-sub").textContent = primary ? `${results.length} candidate(s) · ranked by ${primary}` : `${results.length} candidate(s)`;
+
+  let html = `<tr><th>Rank</th><th>Model</th><th>Trials</th>${primary ? `<th>${escapeHtml(primary)}${hasCv ? " (CV)" : ""}</th>` : ""}${secondary ? `<th>${escapeHtml(secondary)}</th>` : ""}<th>Training Time</th><th>Status</th></tr>`;
+  ranked.forEach((r, i) => {
+    const isBest = r.run_id === bestId;
+    const trials = r.tuning && r.tuning.enabled ? `${r.tuning.trials_done}/${r.tuning.trials_total}` : "no tuning";
+    html += `<tr class="${isBest ? "best" : ""}">
+      <td>${i + 1}</td>
+      <td>${escapeHtml(r.candidate_name)}${isBest ? '<span class="winner-tag">★ CHAMPION</span>' : ""}</td>
+      <td>${escapeHtml(trials)}</td>
+      ${primary ? `<td class="num">${r.metrics && primary in r.metrics ? (hasCv ? cvCell(r, primary) : Number(r.metrics[primary]).toFixed(4)) : "—"}</td>` : ""}
+      ${secondary ? `<td class="num">${r.metrics && secondary in r.metrics ? Number(r.metrics[secondary]).toFixed(4) : "—"}</td>` : ""}
+      <td>${r.duration_seconds != null ? formatDuration(r.duration_seconds) : "—"}</td>
+      <td>${escapeHtml(r.status.replaceAll("_", " "))}${r.error ? errorDisclosure(r.error) : ""}</td>
+    </tr>`;
+  });
+  $("exp-table").innerHTML = html;
+}
+
+/* ================= experiments: distribution donuts ================= */
+
+function drawDonut(svgId, centerId, legendId, entries, colors, centerLabel) {
+  const total = entries.reduce((acc, [, n]) => acc + n, 0);
+  if (!total) { $(svgId).innerHTML = ""; $(centerId).innerHTML = ""; $(legendId).innerHTML = ""; return; }
+  const R = 44, C = 2 * Math.PI * R;
+  const gapPx = entries.length > 1 ? 3 : 0;
+  let offset = 0;
+  let svg = "";
+  entries.forEach(([, count], i) => {
+    const frac = count / total;
+    const len = Math.max(frac * C - gapPx, 1);
+    svg += `<circle cx="60" cy="60" r="${R}" fill="none" stroke="${colors[i % colors.length]}"
+      stroke-width="14" stroke-linecap="butt"
+      stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-offset}"
+      transform="rotate(-90 60 60)"/>`;
+    offset += frac * C;
+  });
+  $(svgId).innerHTML = svg;
+  $(centerId).innerHTML = centerLabel;
+  $(legendId).innerHTML = entries
+    .map(([label, count], i) => `
+      <li><span class="swatch" style="background:${colors[i % colors.length]}"></span>
+      ${escapeHtml(label)}<span class="count">${count} (${Math.round((count / total) * 100)}%)</span></li>`)
+    .join("");
+}
+
+function renderExperimentsDonuts(run) {
+  const results = run.training_results || [];
+  const bestId = (run.best_model || {}).run_id;
+  const metric = (run.task_spec || {}).metric;
+  const styles = getComputedStyle(document.documentElement);
+  const cssVar = (k) => styles.getPropertyValue(k).trim();
+
+  // By Model — trial-count share per candidate, 8 named + "Other" fold-in
+  const named = results.slice(0, 8);
+  const overflow = results.slice(8);
+  const modelEntries = named.map((r) => [r.candidate_name, r.tuning?.trials_done || 1]);
+  const modelColors = EXP_TREND_COLOR_KEYS.map(cssVar);
+  if (overflow.length) {
+    modelEntries.push(["Other", overflow.reduce((s, r) => s + (r.tuning?.trials_done || 1), 0)]);
+    modelColors.push(cssVar("--text-secondary"));
+  }
+  $("exp-donut-model-sub").textContent = `${results.length} candidate(s)`;
+  drawDonut("exp-donut-model", "exp-donut-model-center", "exp-donut-model-legend", modelEntries, modelColors, `${results.length}<small>models</small>`);
+
+  // By Status — fixed status colors, never categorical
+  const statusOrder = ["succeeded", "failed", "timed_out", "running", "pending"];
+  const statusColor = { succeeded: cssVar("--accent-success"), failed: cssVar("--accent-danger"), timed_out: cssVar("--accent-warning"), running: cssVar("--text-secondary"), pending: cssVar("--text-secondary") };
+  const statusCounts = {};
+  for (const r of results) statusCounts[r.status] = (statusCounts[r.status] || 0) + 1;
+  const statusEntries = statusOrder.filter((s) => statusCounts[s]).map((s) => [s.replaceAll("_", " "), statusCounts[s]]);
+  const statusColors = statusOrder.filter((s) => statusCounts[s]).map((s) => statusColor[s]);
+  $("exp-donut-status-sub").textContent = `${results.length} total`;
+  drawDonut("exp-donut-status", "exp-donut-status-center", "exp-donut-status-legend", statusEntries, statusColors, `${results.length}<small>total</small>`);
+
+  // By Outcome vs champion — champion / close contender (within 2% relative) / trailed
+  const best = run.best_model || {};
+  const bestScore = metric && best.metrics && metric in best.metrics ? Number(best.metrics[metric]) : null;
+  const lowerIsBetter = metric === "rmse" || metric === "mae";
+  let champCount = 0, closeCount = 0, trailedCount = 0;
+  for (const r of results) {
+    if (r.run_id === bestId) { champCount += 1; continue; }
+    if (bestScore == null || !r.metrics || !(metric in r.metrics)) { trailedCount += 1; continue; }
+    const rel = Math.abs(r.metrics[metric] - bestScore) / Math.abs(bestScore || 1);
+    const better = lowerIsBetter ? r.metrics[metric] < bestScore : r.metrics[metric] > bestScore;
+    if (rel <= 0.02 || better) closeCount += 1; else trailedCount += 1;
+  }
+  const outcomeEntries = [["Champion", champCount], ["Close contender", closeCount], ["Trailed", trailedCount]].filter(([, n]) => n > 0);
+  const outcomeColorMap = { Champion: cssVar("--accent-primary"), "Close contender": cssVar("--accent-success"), Trailed: cssVar("--text-secondary") };
+  const outcomeColors = outcomeEntries.map(([label]) => outcomeColorMap[label]);
+  $("exp-donut-outcome-sub").textContent = `vs ${escapeHtml(best.candidate_name || "champion")}`;
+  drawDonut("exp-donut-outcome", "exp-donut-outcome-center", "exp-donut-outcome-legend", outcomeEntries, outcomeColors, `${results.length}<small>total</small>`);
+
+  // By Compute Time — ordinal buckets, one hue at 3 opacities
+  const buckets = [
+    { label: "< 30s", test: (d) => d < 30 },
+    { label: "30s - 2m", test: (d) => d >= 30 && d <= 120 },
+    { label: "> 2m", test: (d) => d > 120 },
+  ];
+  const base = cssVar("--cat-2");
+  const toRgba = (hex, alpha) => {
+    const n = parseInt(hex.replace("#", ""), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+  };
+  const computeCounts = buckets.map((b) => results.filter((r) => r.duration_seconds != null && b.test(r.duration_seconds)).length);
+  const computeEntries = buckets.map((b, i) => [b.label, computeCounts[i]]).filter(([, n]) => n > 0);
+  const computeColors = [toRgba(base, 1), toRgba(base, 0.65), toRgba(base, 0.35)].filter((_, i) => computeCounts[i] > 0);
+  $("exp-donut-compute-sub").textContent = `${results.length} candidate(s)`;
+  drawDonut("exp-donut-compute", "exp-donut-compute-center", "exp-donut-compute-legend", computeEntries, computeColors, `${results.length}<small>total</small>`);
+}
+
+function classImbalanceRatioLabel(run) {
+  const spec = run.task_spec || {};
+  const target = (run.profile_columns || []).find((c) => c.name === spec.target_column);
+  const entries = target && target.top_values ? Object.entries(target.top_values).sort((a, b) => b[1] - a[1]) : [];
+  if (spec.task_type !== "classification" || entries.length < 2) return null;
+  const majority = entries[0][1], minority = entries[entries.length - 1][1];
+  if (!minority) return null;
+  const total = majority + minority;
+  return `${Math.round((majority / total) * 100)}:${Math.round((minority / total) * 100)}`;
+}
+
+function renderExperimentsBestPanel(run) {
+  const best = run.best_model || {};
+  const panel = $("exp-best-panel");
+  if (!best.candidate_name) { panel.innerHTML = `<p class="muted small">No champion selected yet.</p>`; return; }
+
+  const metric = (run.task_spec || {}).metric;
+  const results = run.training_results || [];
+  const metricNames = [...new Set(results.flatMap((r) => Object.keys(r.metrics || {})))];
+  const secondary = metricNames.find((m) => m !== metric);
+  const trials = best.tuning && best.tuning.enabled ? `${best.tuning.trials_done}/${best.tuning.trials_total}` : "no tuning";
+
+  const metricRows = [metric, secondary]
+    .filter(Boolean)
+    .map((m) => {
+      const cv = best.cv_metrics && best.cv_metrics[m];
+      const value = cv ? `${cv.mean.toFixed(3)} ± ${cv.std.toFixed(3)}` : (best.metrics && m in best.metrics ? Number(best.metrics[m]).toFixed(3) : "—");
+      return `<div class="exp-best-row"><span class="label">${escapeHtml(m)}${cv ? " (CV mean)" : ""}</span><span class="value">${value}</span></div>`;
+    })
+    .join("");
+
+  const ratio = classImbalanceRatioLabel(run);
+  const resampling = run.resampling_plan || {};
+  const dataUsed = resampling.enabled && best.resampling_applied
+    ? `${best.resampling_applied.replaceAll("_", " ")}${ratio ? ` (${ratio})` : ""}`
+    : "no resampling";
+
+  panel.innerHTML = `
+    <div class="exp-best-header">
+      <span class="stat-icon amber">${ICONS.trophy}</span>
+      <div>
+        <div class="stat-label">Best Experiment</div>
+        <h3>${escapeHtml(best.candidate_name)}</h3>
+      </div>
+    </div>
+    <div class="exp-best-row"><span class="label">Trials</span><span class="value">${escapeHtml(trials)}</span></div>
+    <div class="exp-best-row"><span class="label">Status</span><span class="value">${escapeHtml((best.status || "succeeded").replaceAll("_", " "))}</span></div>
+    <div class="exp-best-section">
+      <h4>Key Metrics</h4>
+      ${metricRows}
+    </div>
+    <div class="exp-best-section">
+      <h4>Training Info</h4>
+      <div class="exp-best-row"><span class="label">Training Time</span><span class="value">${best.duration_seconds != null ? formatDuration(best.duration_seconds) : "—"}</span></div>
+      <div class="exp-best-row"><span class="label">Start Time</span><span class="value">${run.created_at ? new Date(run.created_at * 1000).toLocaleString() : "—"}</span></div>
+      <div class="exp-best-row"><span class="label">Data Used</span><span class="value">${escapeHtml(dataUsed)}</span></div>
+      <div class="exp-best-row"><span class="label">Folds</span><span class="value">${best.cv_folds ? `${best.cv_folds}-fold CV` : "no CV"}</span></div>
+    </div>`;
 }
 
 /* ================= AI assistant panel ================= */
@@ -2373,7 +2683,7 @@ $("trace-toggle-btn").addEventListener("click", async () => {
   }
 });
 
-const RUN_TABS = ["overview", "pipeline", "models", "explainability", "artifacts", "logs"];
+const RUN_TABS = ["overview", "experiments", "explainability", "artifacts", "logs"];
 
 function switchRunTab(name) {
   for (const tab of RUN_TABS) {
@@ -2565,6 +2875,26 @@ function escapeHtml(str) {
   div.textContent = str ?? "";
   return div.innerHTML;
 }
+
+/* ================= collapsible rail cards ================= */
+
+function initCollapsible(cardId) {
+  const card = $(cardId);
+  const toggle = card.querySelector(".collapsible-toggle");
+  const body = card.querySelector(".card-collapsible-body");
+  const storageKey = `collapse:${cardId}`;
+  const expanded = localStorage.getItem(storageKey) === "true";
+  toggle.setAttribute("aria-expanded", String(expanded));
+  body.classList.toggle("expanded", expanded);
+  toggle.addEventListener("click", () => {
+    const next = toggle.getAttribute("aria-expanded") !== "true";
+    toggle.setAttribute("aria-expanded", String(next));
+    body.classList.toggle("expanded", next);
+    localStorage.setItem(storageKey, String(next));
+  });
+}
+initCollapsible("ai-summary-card");
+initCollapsible("activity-card");
 
 $("logout-btn").addEventListener("click", async () => {
   try {

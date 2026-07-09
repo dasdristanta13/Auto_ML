@@ -189,8 +189,7 @@
       <div class="tab-bar run-tab-bar" role="tablist">
         <button class="tab-btn active" id="tab-overview-btn" type="button" role="tab" aria-selected="true">Overview</button>
         <button class="tab-btn" id="tab-data-btn" type="button" role="tab" aria-selected="false">Data</button>
-        <button class="tab-btn" id="tab-pipeline-btn" type="button" role="tab" aria-selected="false">Pipeline</button>
-        <button class="tab-btn" id="tab-models-btn" type="button" role="tab" aria-selected="false">Models Compared</button>
+        <button class="tab-btn" id="tab-experiments-btn" type="button" role="tab" aria-selected="false">Experiments</button>
         <button class="tab-btn" id="tab-explainability-btn" type="button" role="tab" aria-selected="false">Explainability</button>
         <button class="tab-btn" id="tab-artifacts-btn" type="button" role="tab" aria-selected="false">Artifacts</button>
         <button class="tab-btn" id="tab-logs-btn" type="button" role="tab" aria-selected="false">Logs</button>
@@ -216,13 +215,13 @@
           </div>
         </section>
 
-        <section class="card">
+        <section class="card overview-story-card">
           <div class="card-head"><h3>Journey of This Run</h3></div>
           <ol class="journey-condensed" id="journey-condensed"></ol>
           <button type="button" class="btn ghost" id="journey-view-pipeline-btn">View Full Pipeline</button>
         </section>
 
-        <section class="card">
+        <section class="card overview-story-card">
           <div class="card-head">
             <h3>Model Leaderboard</h3>
             <span class="muted small" id="leaderboard-condensed-sub"></span>
@@ -231,7 +230,7 @@
           <button type="button" class="btn ghost hidden" id="leaderboard-view-all-btn">View all models</button>
         </section>
 
-        <section class="card">
+        <section class="card overview-story-card">
           <div class="rationale-grid">
             <div>
               <h3>Why This Model?</h3>
@@ -400,34 +399,6 @@
           </div>
           <ul class="callout-list insight-list" id="insights-list"></ul>
         </div>
-
-        <div class="card hidden" id="dataset-card">
-          <div class="card-head"><h3>Dataset summary</h3><span class="muted small" id="dataset-sub"></span></div>
-          <div class="donut-wrap">
-            <svg id="donut" viewBox="0 0 120 120" role="img" aria-label="Feature type breakdown"></svg>
-            <div class="donut-center" id="donut-center"></div>
-            <ul class="donut-legend" id="donut-legend"></ul>
-          </div>
-          <div class="chips" id="dataset-chips"></div>
-        </div>
-
-        <div class="card hidden" id="classdist-card">
-          <div class="card-head"><h3>Class distribution</h3><span class="muted small" id="classdist-sub"></span></div>
-          <div class="donut-wrap">
-            <svg id="classdist-donut" viewBox="0 0 120 120" role="img" aria-label="Target class distribution"></svg>
-            <div class="donut-center" id="classdist-center"></div>
-            <ul class="donut-legend" id="classdist-legend"></ul>
-          </div>
-          <div class="chips" id="classdist-chips"></div>
-        </div>
-
-        <div class="card hidden" id="quality-card">
-          <div class="card-head"><h3>Data quality overview</h3><span class="muted small" id="quality-sub"></span></div>
-          <div class="quality-wrap">
-            <div class="quality-ring" id="quality-ring"></div>
-            <div class="quality-bars" id="quality-bars"></div>
-          </div>
-        </div>
       </section>
 
       <div class="card hidden" id="fi-card">
@@ -452,8 +423,7 @@
 
       </div><!-- /tab-overview-panel -->
 
-      <div id="tab-pipeline-panel" class="hidden">
-        <!-- live pipeline -->
+      <div id="tab-experiments-panel" class="hidden">
         <section class="card">
           <div class="card-head">
             <h3>Pipeline stages</h3>
@@ -466,33 +436,101 @@
             <div class="tuning-progress-list" id="tuning-progress-list"></div>
           </div>
         </section>
-      </div><!-- /tab-pipeline-panel -->
+        <div class="experiments-layout">
+          <div class="experiments-main">
+            <section class="stat-row" id="exp-stat-cards"></section>
+            <section class="dash-grid">
+              <div class="card dense hidden" id="dataset-card">
+                <div class="card-head"><h3>Dataset summary</h3><span class="muted small" id="dataset-sub"></span></div>
+                <div class="donut-wrap">
+                  <svg id="donut" viewBox="0 0 120 120" role="img" aria-label="Feature type breakdown"></svg>
+                  <div class="donut-center" id="donut-center"></div>
+                  <ul class="donut-legend" id="donut-legend"></ul>
+                </div>
+                <div class="chips" id="dataset-chips"></div>
+              </div>
 
-      <div id="tab-models-panel" class="hidden">
-        <section class="dash-grid">
-          <div class="card hidden" id="results-card">
-            <div class="card-head">
-              <h3>Model comparison</h3>
-              <span class="muted small" id="results-sub"></span>
-            </div>
-            <div class="chip-row">
-              <div class="chip cv-config-chip" id="cv-config-chip"></div>
-              <div class="chip cv-config-chip hidden" id="resampling-config-chip"></div>
-              <div class="chip cv-config-chip hidden" id="fs-config-chip"></div>
-            </div>
-            <div class="table-scroll"><table class="results-table" id="results-table"></table></div>
-          </div>
+              <div class="card dense hidden" id="classdist-card">
+                <div class="card-head"><h3>Class distribution</h3><span class="muted small" id="classdist-sub"></span></div>
+                <div class="donut-wrap">
+                  <svg id="classdist-donut" viewBox="0 0 120 120" role="img" aria-label="Target class distribution"></svg>
+                  <div class="donut-center" id="classdist-center"></div>
+                  <ul class="donut-legend" id="classdist-legend"></ul>
+                </div>
+                <div class="chips" id="classdist-chips"></div>
+              </div>
 
-          <div class="card hidden" id="tuning-card">
-            <div class="card-head">
-              <h3>Hyperparameter tuning trend</h3>
-              <span class="muted small" id="tuning-sub"></span>
+              <div class="card dense hidden" id="quality-card">
+                <div class="card-head"><h3>Data quality overview</h3><span class="muted small" id="quality-sub"></span></div>
+                <div class="quality-wrap">
+                  <div class="quality-ring" id="quality-ring"></div>
+                  <div class="quality-bars" id="quality-bars"></div>
+                </div>
+              </div>
+            </section>
+            <section class="dash-grid">
+              <div class="card dense">
+                <div class="card-head"><h3>Model Performance Overview</h3><span class="muted small" id="exp-bar-sub"></span></div>
+                <div class="exp-bar-chart" id="exp-bar-chart"></div>
+                <ul class="exp-bar-legend">
+                  <li><span class="swatch" style="background:var(--accent-primary)"></span>Best Model</li>
+                  <li><span class="swatch" style="background:var(--border-subtle)"></span>Other Models</li>
+                </ul>
+              </div>
+              <div class="card dense">
+                <div class="card-head"><h3>Experiment Trend</h3><span class="muted small" id="exp-trend-sub"></span></div>
+                <div id="exp-trend-chart"></div>
+                <ul class="tuning-legend" id="exp-trend-legend"></ul>
+                <p class="muted small hidden" id="exp-trend-empty">No candidates had hyperparameter tuning enabled for this run, so there's no trial-by-trial trend to show.</p>
+              </div>
+            </section>
+            <div class="card dense">
+              <div class="card-head"><h3>All Experiments</h3><span class="muted small" id="exp-table-sub"></span></div>
+              <div class="chip-row">
+                <div class="chip cv-config-chip" id="cv-config-chip"></div>
+                <div class="chip cv-config-chip hidden" id="resampling-config-chip"></div>
+                <div class="chip cv-config-chip hidden" id="fs-config-chip"></div>
+              </div>
+              <div class="table-scroll"><table class="results-table" id="exp-table"></table></div>
             </div>
-            <div id="tuning-chart"></div>
-            <ul class="tuning-legend" id="tuning-legend"></ul>
+            <section class="dash-grid">
+              <div class="card dense">
+                <div class="card-head"><h3>By Model</h3><span class="muted small" id="exp-donut-model-sub"></span></div>
+                <div class="donut-wrap">
+                  <svg id="exp-donut-model" viewBox="0 0 120 120" role="img" aria-label="Trial share by model"></svg>
+                  <div class="donut-center" id="exp-donut-model-center"></div>
+                  <ul class="donut-legend" id="exp-donut-model-legend"></ul>
+                </div>
+              </div>
+              <div class="card dense">
+                <div class="card-head"><h3>By Status</h3><span class="muted small" id="exp-donut-status-sub"></span></div>
+                <div class="donut-wrap">
+                  <svg id="exp-donut-status" viewBox="0 0 120 120" role="img" aria-label="Candidate count by status"></svg>
+                  <div class="donut-center" id="exp-donut-status-center"></div>
+                  <ul class="donut-legend" id="exp-donut-status-legend"></ul>
+                </div>
+              </div>
+              <div class="card dense">
+                <div class="card-head"><h3>By Outcome</h3><span class="muted small" id="exp-donut-outcome-sub"></span></div>
+                <div class="donut-wrap">
+                  <svg id="exp-donut-outcome" viewBox="0 0 120 120" role="img" aria-label="Candidate count vs champion"></svg>
+                  <div class="donut-center" id="exp-donut-outcome-center"></div>
+                  <ul class="donut-legend" id="exp-donut-outcome-legend"></ul>
+                </div>
+              </div>
+              <div class="card dense">
+                <div class="card-head"><h3>By Compute Time</h3><span class="muted small" id="exp-donut-compute-sub"></span></div>
+                <div class="donut-wrap">
+                  <svg id="exp-donut-compute" viewBox="0 0 120 120" role="img" aria-label="Candidate count by training time bucket"></svg>
+                  <div class="donut-center" id="exp-donut-compute-center"></div>
+                  <ul class="donut-legend" id="exp-donut-compute-legend"></ul>
+                </div>
+              </div>
+            </section>
           </div>
-        </section>
-      </div><!-- /tab-models-panel -->
+          <aside class="card" id="exp-best-panel"></aside>
+        </div>
+      </div><!-- /tab-experiments-panel -->
 
       <div id="tab-explainability-panel" class="hidden">
         <div class="card" id="explainability-card">
@@ -531,10 +569,19 @@
       </div><!-- /run-main -->
 
       <aside class="run-rail" id="run-rail">
-        <div class="card hidden ai-summary-card" id="ai-summary-card">
-          <div class="card-head"><h3><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9Z"/></svg> AI Summary</h3></div>
-          <div id="report-lede" class="report-lede hidden"></div>
-          <div id="report-body" class="report-body"></div>
+        <div class="card hidden ai-summary-card collapsible-card" id="ai-summary-card">
+          <div class="card-head">
+            <button type="button" class="collapsible-toggle" id="ai-summary-toggle" aria-expanded="false" aria-controls="ai-summary-body">
+              <h3><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9Z"/></svg> AI Summary</h3>
+              <span class="collapsible-chevron"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span>
+            </button>
+          </div>
+          <div class="card-collapsible-body" id="ai-summary-body">
+            <div class="card-collapsible-inner">
+              <div id="report-lede" class="report-lede hidden"></div>
+              <div id="report-body" class="report-body"></div>
+            </div>
+          </div>
         </div>
 
         <div class="card reasoning-rail hidden" id="reasoning-rail">
@@ -592,9 +639,18 @@
           <p class="chat-error hidden" id="chat-error" role="alert"></p>
         </div>
 
-        <div class="card hidden" id="activity-card">
-          <div class="card-head"><h3>Recent activity</h3></div>
-          <ul class="activity-list" id="activity-list"></ul>
+        <div class="card hidden collapsible-card" id="activity-card">
+          <div class="card-head">
+            <button type="button" class="collapsible-toggle" id="activity-toggle" aria-expanded="false" aria-controls="activity-body">
+              <h3>Recent activity</h3>
+              <span class="collapsible-chevron"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span>
+            </button>
+          </div>
+          <div class="card-collapsible-body" id="activity-body">
+            <div class="card-collapsible-inner">
+              <ul class="activity-list" id="activity-list"></ul>
+            </div>
+          </div>
         </div>
       </aside>
       </div><!-- /run-layout -->
