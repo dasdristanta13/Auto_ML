@@ -521,15 +521,15 @@ def _shap_fidelity_r2(
     (e.g. multiclass classification), or on any failure — this is a
     diagnostic extra, never a reason to fail compute_explainability.
 
-    Tree SHAP reconstructs different quantities depending on the library:
-    sklearn's bagged ensembles (e.g. RandomForest) average class-probability
-    leaf values directly, so base + sum(shap) already lands in [0, 1] and
-    matches predict_proba(). Boosting libraries with a log-odds link
-    (XGBoost, LightGBM, sklearn's own GradientBoostingClassifier) instead
-    reconstruct the pre-sigmoid margin, which must be pushed back through a
-    sigmoid before it's comparable to predict_proba() — comparing the raw
-    margin against a probability otherwise yields a meaningless, wildly
-    negative R² even when the SHAP values perfectly reconstruct the model."""
+    Different models' SHAP explainers reconstruct different quantities: sklearn's
+    bagged ensembles (e.g. RandomForest) reconstruct predict_proba() directly,
+    so base + sum(shap) lands in [0, 1] already. However, any model whose SHAP
+    additivity target is the pre-link score (margin/log-odds space) — including
+    linear models with a logit link (LogisticRegression) and boosting libraries
+    with a log-odds link (XGBoost, LightGBM, sklearn's GradientBoostingClassifier) —
+    must be corrected by applying a sigmoid before comparison against predict_proba(),
+    otherwise the raw margin yields a meaningless, wildly negative R² even when
+    the SHAP values perfectly reconstruct the model."""
     try:
         if hasattr(model, "predict_proba"):
             proba = model.predict_proba(background)

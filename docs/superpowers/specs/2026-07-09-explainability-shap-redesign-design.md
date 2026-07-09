@@ -50,16 +50,17 @@ data it already has in memory (no second SHAP pass):
   after `4846853`):** for binary classification, `base_value +
   shap_values.sum(axis=1)` isn't always in probability space. sklearn's
   bagged ensembles (e.g. `RandomForestClassifier`) reconstruct
-  `predict_proba` directly, but boosting libraries with a log-odds link
-  (`XGBClassifier`, `LGBMClassifier`, sklearn's own
-  `GradientBoostingClassifier`) reconstruct the pre-sigmoid margin
-  instead. Comparing that margin against `predict_proba` without an
-  inverse-link transform produced a meaningless, wildly negative R² (a
-  live smoke test surfaced `-207.20` for a real LightGBM-champion run)
-  even when the SHAP values perfectly reconstructed the model. The fix:
-  if the reconstructed value falls outside `[0, 1]`, apply a sigmoid
-  before scoring against `predict_proba`. See
-  `_shap_fidelity_r2`/`test_shap_fidelity_r2_applies_sigmoid_for_margin_space_reconstruction`
+  `predict_proba` directly, but any model whose SHAP additivity target is
+  the pre-link score (margin/log-odds space) — including linear models with
+  a logit link (`LogisticRegression`) and boosting libraries with a log-odds
+  link (`XGBClassifier`, `LGBMClassifier`, sklearn's
+  `GradientBoostingClassifier`) — reconstruct the pre-sigmoid margin instead.
+  Comparing that margin against `predict_proba` without an inverse-link
+  transform produced a meaningless, wildly negative R² (a live smoke test
+  surfaced `-207.20` for a real LightGBM-champion run) even when the SHAP
+  values perfectly reconstructed the model. The fix: if the reconstructed
+  value falls outside `[0, 1]`, apply a sigmoid before scoring against
+  `predict_proba`. See `_shap_fidelity_r2`/`test_shap_fidelity_r2_applies_sigmoid_for_margin_space_reconstruction`
   in `src/training/dispatch.py` / `tests/test_explainability.py`.
 - `background_sample_size: int` — `len(background)` (already computed).
 

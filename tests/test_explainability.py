@@ -79,6 +79,7 @@ def test_compute_explainability_linear_model(trained_linear_model):
     assert result["method"] == "linear"
     assert result["note"] is None
     assert result["feature_impact"]
+    assert result["fidelity_r2"] > 0.9
 
 
 def test_compute_explainability_caps_to_top_n_features(tmp_path):
