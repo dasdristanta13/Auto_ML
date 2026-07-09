@@ -980,6 +980,14 @@ select, textarea, input[type="text"], input[type="number"] {
 .experiments-layout { display: grid; grid-template-columns: 2fr 1fr; gap: var(--sp-4); align-items: start; }
 @media (max-width: 980px) { .experiments-layout { grid-template-columns: 1fr; } }
 .experiments-main { display: grid; gap: var(--sp-3); }
+
+.explainability-layout { display: grid; grid-template-columns: 2fr 1fr; gap: var(--sp-4); align-items: start; }
+@media (max-width: 980px) { .explainability-layout { grid-template-columns: 1fr; } }
+.explainability-main { display: grid; gap: var(--sp-3); }
+
+.method-list { display: grid; gap: var(--sp-2); }
+.method-row { display: flex; justify-content: space-between; gap: var(--sp-2); font-size: var(--text-sm); }
+.method-row .label { color: var(--text-secondary); }
 .exp-best-header { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); }
 .exp-best-header .stat-icon { flex-shrink: 0; }
 .exp-best-section { margin-top: var(--sp-3); }

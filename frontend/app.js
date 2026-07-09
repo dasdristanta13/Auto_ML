@@ -160,6 +160,7 @@ let selectedFile = null;
 let lastRun = null;
 let predictFormLoadedFor = null;
 let explainabilityLoadedFor = null;
+let lastExplainabilityData = null;
 let currentDatasetRunId = null;
 let previewState = { page: 1, pageSize: 50, sortBy: null, sortDir: "asc", search: "" };
 let previewColumns = [];
@@ -2561,6 +2562,9 @@ async function loadExplainabilityTab(run) {
   if (!(run.best_model || {}).model_path) {
     $("explainability-narrative").textContent = "";
     $("explainability-plots").innerHTML = "";
+    $("explainability-stat-cards").innerHTML = "";
+    $("explainability-insights-card").classList.add("hidden");
+    $("explainability-subtabs-wrap").classList.add("hidden");
     $("explainability-empty").textContent = "No trained model is available for this run yet.";
     $("explainability-empty").classList.remove("hidden");
     return;
@@ -2570,12 +2574,14 @@ async function loadExplainabilityTab(run) {
 
   $("explainability-narrative").textContent = "";
   $("explainability-plots").innerHTML = "";
+  $("explainability-subtabs-wrap").classList.add("hidden");
   $("explainability-empty").textContent = "Loading explainability data…";
   $("explainability-empty").classList.remove("hidden");
 
   try {
     const data = await (await authFetch(`/api/runs/${run.run_id}/explainability`)).json();
-    renderExplainability(data);
+    lastExplainabilityData = data;
+    renderExplainability(run, data);
   } catch {
     $("explainability-empty").textContent = "Could not load explainability data for this run.";
     $("explainability-empty").classList.remove("hidden");
@@ -2591,21 +2597,91 @@ function renderShapPlot(plot) {
     </div>`;
 }
 
-function renderExplainability(data) {
+function renderExplainabilityStatCards(run, data) {
+  const spec = run.task_spec || {};
+  const best = run.best_model || {};
+  const metric = spec.metric;
+  const bestScore = metric && best.metrics && metric in best.metrics ? Number(best.metrics[metric]).toFixed(3) : null;
+
+  const cards = [
+    {
+      icon: "shield", tint: "green", label: "Model Fidelity (R²)",
+      value: data.fidelity_r2 != null ? data.fidelity_r2.toFixed(2) : "—",
+      sub: "SHAP values explain model output variance",
+    },
+    {
+      icon: "db", tint: "violet", label: "Samples Analyzed",
+      value: data.background_sample_size ? data.background_sample_size.toLocaleString() : "—",
+      sub: "sampled from the training data",
+    },
+    {
+      icon: "cpu", tint: "violet", label: "Model",
+      value: best.candidate_name || "—",
+      sub: bestScore ? `${metric}: ${bestScore}` : "",
+    },
+    {
+      icon: "grid", tint: "amber", label: "Target",
+      value: spec.target_column || "—",
+      sub: spec.task_type || "",
+    },
+  ];
+
+  $("explainability-stat-cards").innerHTML = cards
+    .map(
+      (c) => `
+      <div class="stat-card">
+        <span class="stat-icon ${c.tint}">${ICONS[c.icon]}</span>
+        <div class="stat-body">
+          <div class="stat-label">${escapeHtml(c.label)}</div>
+          <div class="stat-value">${escapeHtml(String(c.value))}</div>
+          <div class="stat-sub">${escapeHtml(c.sub)}</div>
+        </div>
+      </div>`
+    )
+    .join("");
+}
+
+const KEY_INSIGHT_TONE = { driver: "success", risk: "warning", minor: "info" };
+const KEY_INSIGHT_ICON = { driver: "check", risk: "warning", minor: "sparkle" };
+
+function renderKeyInsights(data) {
+  const card = $("explainability-insights-card");
+  const insights = data.key_insights || [];
+  if (!insights.length) {
+    card.classList.add("hidden");
+    return;
+  }
+  card.classList.remove("hidden");
+  $("explainability-insights-list").innerHTML = insights
+    .map(
+      (i) => `<li class="insight-${KEY_INSIGHT_TONE[i.tone] || "info"}">${ICONS[KEY_INSIGHT_ICON[i.tone]] || ICONS.sparkle}<span>${escapeHtml(i.message)}</span></li>`
+    )
+    .join("");
+}
+
+function renderExplainability(run, data) {
   const empty = $("explainability-empty");
   const plotsEl = $("explainability-plots");
   const narrative = $("explainability-narrative");
+  const subtabsWrap = $("explainability-subtabs-wrap");
 
   const hasPlots = data.summary_plot || data.bar_plot || (data.dependence_plots && data.dependence_plots.length);
   if (data.method === "unavailable" || !hasPlots) {
     plotsEl.innerHTML = "";
     narrative.textContent = "";
+    $("explainability-stat-cards").innerHTML = "";
+    $("explainability-insights-card").classList.add("hidden");
+    subtabsWrap.classList.add("hidden");
     empty.textContent = data.note || "SHAP-based impact analysis isn't available for this run.";
     empty.classList.remove("hidden");
     return;
   }
   empty.classList.add("hidden");
+  subtabsWrap.classList.remove("hidden");
   narrative.textContent = data.narrative || "";
+
+  renderExplainabilityStatCards(run, data);
+  renderKeyInsights(data);
 
   let html = "";
   if (data.bar_plot) html += renderShapPlot(data.bar_plot);

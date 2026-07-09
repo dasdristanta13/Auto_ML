@@ -533,11 +533,48 @@
       </div><!-- /tab-experiments-panel -->
 
       <div id="tab-explainability-panel" class="hidden">
-        <div class="card" id="explainability-card">
-          <div class="card-head"><h3>What drives this model (SHAP)</h3></div>
-          <p class="muted small" id="explainability-narrative"></p>
-          <div id="explainability-plots"></div>
-          <p class="muted small hidden" id="explainability-empty"></p>
+        <section class="stat-row" id="explainability-stat-cards"></section>
+        <p class="muted small hidden" id="explainability-empty"></p>
+        <div id="explainability-subtabs-wrap">
+          <div class="tab-bar" role="tablist">
+            <button class="tab-btn active" id="expl-subtab-global-btn" type="button" role="tab" aria-selected="true">Global View</button>
+            <button class="tab-btn" id="expl-subtab-local-btn" type="button" role="tab" aria-selected="false">Local Explanation</button>
+          </div>
+
+          <div id="expl-subtab-global-panel">
+            <div class="explainability-layout">
+              <div class="explainability-main">
+                <div class="card" id="explainability-card">
+                  <div class="card-head"><h3>What drives this model (SHAP)</h3></div>
+                  <p class="muted small" id="explainability-narrative"></p>
+                  <div id="explainability-plots"></div>
+                </div>
+              </div>
+              <aside class="card hidden" id="explainability-insights-card">
+                <div class="card-head"><h3>Key Insights</h3></div>
+                <ul class="callout-list insight-list" id="explainability-insights-list"></ul>
+              </aside>
+            </div>
+          </div><!-- /expl-subtab-global-panel -->
+
+          <div id="expl-subtab-local-panel" class="hidden">
+            <div class="explainability-layout">
+              <div class="explainability-main">
+                <div class="card" id="local-example-card">
+                  <div class="card-head">
+                    <h3 id="local-example-headline">Example prediction</h3>
+                    <button class="btn-secondary small" id="local-example-next-btn" type="button">View another example</button>
+                  </div>
+                  <div id="local-example-waterfall"></div>
+                  <p class="muted small hidden" id="local-example-empty"></p>
+                </div>
+              </div>
+              <aside class="card hidden" id="local-example-method-card">
+                <div class="card-head"><h3>Data &amp; Method</h3></div>
+                <div class="method-list" id="local-example-method-list"></div>
+              </aside>
+            </div>
+          </div><!-- /expl-subtab-local-panel -->
         </div>
       </div><!-- /tab-explainability-panel -->
 
