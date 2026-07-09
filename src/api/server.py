@@ -248,7 +248,7 @@ def _profile_columns(state: PipelineState) -> list[dict[str, Any]]:
             # aggregate counts only (already PII-redacted upstream) — feeds
             # the class-distribution panel for the confirmed target column
             "top_values": info.get("top_values"),
-            # aggregate stats only (mean/std/percentiles, no raw values) —
+            # distributional stats (mean/std/percentiles/min/max), no raw rows —
             # lets the class-distribution panel fall back to a 0/1-encoded
             # numeric target's mean-as-positive-rate when top_values wasn't
             # computed for it (mirrors minority_ratio() in profiling/heuristics.py)
