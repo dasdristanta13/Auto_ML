@@ -1933,8 +1933,16 @@ function classEntriesFor(target, rowCount) {
   // Mirror src/profiling/heuristics.py's minority_ratio() fallback, which
   // already reads numeric_summary.mean as the positive rate for exactly
   // this case, so the donut still renders for the common binary-int target.
-  const mean = target && target.numeric_summary ? target.numeric_summary.mean : null;
-  if (target && target.n_unique === 2 && rowCount && mean != null && mean >= 0 && mean <= 1) {
+  // Guard strictly: this is only valid for a literal {0, 1} encoding (not
+  // any binary numeric encoding with a mean in [0, 1], e.g. {-1, 1}), and
+  // only when there are no nulls (numeric_summary.mean is computed over
+  // dropna()'d values, so nulls would otherwise be silently folded into
+  // the "negative" class).
+  const summary = target && target.numeric_summary;
+  const mean = summary ? summary.mean : null;
+  const isZeroOneEncoded = summary && summary.min === 0 && summary.max === 1;
+  const hasNoNulls = target && target.null_rate === 0;
+  if (target && target.n_unique === 2 && rowCount && mean != null && isZeroOneEncoded && hasNoNulls) {
     const positives = Math.round(mean * rowCount);
     const negatives = rowCount - positives;
     if (positives > 0 && negatives > 0) {
