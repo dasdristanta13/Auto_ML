@@ -1,7 +1,7 @@
 # Which LLM provider+model powers each LangGraph node.
 #
 # SWITCHING PROVIDERS — one line: set `active_profile` to anthropic | openai |
-# gemini. Or, without touching this file, set the AUTOML_LLM_PROFILE
+# gemini | azure. Or, without touching this file, set the AUTOML_LLM_PROFILE
 # environment variable (takes precedence over active_profile).
 # Escape hatches: AUTOML_LLM_MODEL forces one model id for every node;
 # AUTOML_LLM_PROVIDER forces the provider (use together for a custom combo).
@@ -16,7 +16,10 @@
 # litellm must be installed (`pip install litellm`) to use backend: litellm.
 #
 # API keys come from environment variables (see .env.example):
-# ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY — never hardcoded here.
+# ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, AZURE_OPENAI_API_KEY —
+# never hardcoded here. Azure additionally needs azure_endpoint (and
+# optionally api_version) set directly on its profile below, since those
+# are non-secret.
 
 backend: native
 
@@ -41,6 +44,12 @@ profiles:
   gemini:
     provider: gemini
     model: gemini-2.5-flash
+
+  azure:
+    provider: azure
+    model: gpt-5.4-nano   # Azure *deployment name*, not an OpenAI model id
+    azure_endpoint: https://my-resource.openai.azure.com/
+    api_version: "2025-04-01-preview"
 
   # Example: any litellm-supported provider works here once backend:
   # litellm is set above, with zero new code in src/llm/client.py.
