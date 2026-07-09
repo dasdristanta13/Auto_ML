@@ -97,6 +97,10 @@ def node_model_config(node: str) -> dict[str, Any]:
         merged["provider"] = profile["provider"]
         node_override = (profile.get("nodes") or {}).get(node) or {}
         merged["model"] = node_override.get("model", profile["model"])
+        if "azure_endpoint" in profile:
+            merged["azure_endpoint"] = profile["azure_endpoint"]
+        if "api_version" in profile:
+            merged["api_version"] = profile["api_version"]
 
     if os.environ.get("AUTOML_LLM_PROVIDER"):
         merged["provider"] = os.environ["AUTOML_LLM_PROVIDER"]

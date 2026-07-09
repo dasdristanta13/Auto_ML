@@ -61,6 +61,43 @@ def test_profile_fallback_models_surfaced(backend_config, monkeypatch):
     assert cfg["fallback_models"] == ["openai/gpt-5-nano"]
 
 
+def test_azure_profile_surfaces_endpoint_and_api_version(monkeypatch):
+    cfg = {
+        "backend": "native",
+        "active_profile": "azure",
+        "profiles": {
+            "azure": {
+                "provider": "azure",
+                "model": "gpt-5.4-nano",
+                "azure_endpoint": "https://my-resource.openai.azure.com/",
+                "api_version": "2025-04-01-preview",
+            },
+        },
+        "default": {"temperature": 0.0, "max_tokens": 4096},
+        "nodes": {},
+    }
+    monkeypatch.setattr(llm_client, "_models_config", lambda: cfg)
+    resolved = llm_client.node_model_config("chat")
+    assert resolved["provider"] == "azure"
+    assert resolved["model"] == "gpt-5.4-nano"
+    assert resolved["azure_endpoint"] == "https://my-resource.openai.azure.com/"
+    assert resolved["api_version"] == "2025-04-01-preview"
+
+
+def test_azure_profile_without_azure_endpoint_still_resolves(monkeypatch):
+    cfg = {
+        "backend": "native",
+        "active_profile": "azure",
+        "profiles": {"azure": {"provider": "azure", "model": "gpt-5.4-nano"}},
+        "default": {"temperature": 0.0, "max_tokens": 4096},
+        "nodes": {},
+    }
+    monkeypatch.setattr(llm_client, "_models_config", lambda: cfg)
+    resolved = llm_client.node_model_config("chat")
+    assert resolved["provider"] == "azure"
+    assert "azure_endpoint" not in resolved
+
+
 def test_legacy_schema_without_profiles_has_empty_fallback_models(monkeypatch):
     legacy_cfg = {
         "default": {"provider": "openai", "model": "gpt-5-nano", "temperature": 0.0, "max_tokens": 4096},
