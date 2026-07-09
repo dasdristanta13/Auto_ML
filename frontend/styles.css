@@ -1007,3 +1007,9 @@ select, textarea, input[type="text"], input[type="number"] {
 @media (prefers-reduced-motion: reduce) {
   .collapsible-chevron, .card-collapsible-body { transition: none; }
 }
+
+/* ================= overview rhythm ================= */
+
+.overview-story-card + .overview-story-card { margin-top: var(--sp-2); }
+#caveats-card { margin-top: var(--sp-5); }
+#error-card { margin-top: var(--sp-5); }
