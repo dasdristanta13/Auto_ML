@@ -243,6 +243,7 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 }
 .card h3 { font-size: var(--text-base); font-family: var(--font-body); font-weight: 650; }
 .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--sp-2); margin-bottom: var(--sp-3); flex-wrap: wrap; }
+.card.dense { padding: var(--sp-3); }
 
 /* ================= buttons ================= */
 
