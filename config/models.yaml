@@ -1,7 +1,7 @@
 # Which LLM provider+model powers each LangGraph node.
 #
 # SWITCHING PROVIDERS — one line: set `active_profile` to anthropic | openai |
-# gemini. Or, without touching this file, set the AUTOML_LLM_PROFILE
+# gemini | azure. Or, without touching this file, set the AUTOML_LLM_PROFILE
 # environment variable (takes precedence over active_profile).
 # Escape hatches: AUTOML_LLM_MODEL forces one model id for every node;
 # AUTOML_LLM_PROVIDER forces the provider (use together for a custom combo).
