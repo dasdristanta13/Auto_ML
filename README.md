@@ -599,3 +599,4 @@ integration tests (intake → confirm → approve-features → train → chat) r
 - **SHAP explainability is best-effort**, same spirit as leakage detection: fidelity
   R² and plots can be `None`/absent for unsupported estimators, and the pipeline never
   fails a run over an explainability error.
+  
