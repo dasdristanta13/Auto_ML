@@ -1007,8 +1007,12 @@ function openRun(runId) {
   $("trace-body").textContent = "";
   predictFormLoadedFor = null;
   explainabilityLoadedFor = null;
+  lastExplainabilityData = null;
   $("explainability-narrative").textContent = "";
   $("explainability-plots").innerHTML = "";
+  $("explainability-stat-cards").innerHTML = "";
+  $("explainability-insights-card").classList.add("hidden");
+  $("explainability-subtabs-wrap").classList.add("hidden");
   $("explainability-empty").classList.add("hidden");
   $("predict-result").classList.add("hidden");
   chatPendingQuestion = null;
@@ -2574,6 +2578,8 @@ async function loadExplainabilityTab(run) {
 
   $("explainability-narrative").textContent = "";
   $("explainability-plots").innerHTML = "";
+  $("explainability-stat-cards").innerHTML = "";
+  $("explainability-insights-card").classList.add("hidden");
   $("explainability-subtabs-wrap").classList.add("hidden");
   $("explainability-empty").textContent = "Loading explainability data…";
   $("explainability-empty").classList.remove("hidden");
@@ -2583,6 +2589,8 @@ async function loadExplainabilityTab(run) {
     lastExplainabilityData = data;
     renderExplainability(run, data);
   } catch {
+    $("explainability-stat-cards").innerHTML = "";
+    $("explainability-insights-card").classList.add("hidden");
     $("explainability-empty").textContent = "Could not load explainability data for this run.";
     $("explainability-empty").classList.remove("hidden");
     explainabilityLoadedFor = null;
