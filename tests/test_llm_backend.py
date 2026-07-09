@@ -285,6 +285,78 @@ def test_generate_native_backend_calls_call_openai(generate_cfg, monkeypatch):
     assert calls["args"][2] == "gpt-5-nano"
 
 
+@pytest.fixture()
+def azure_generate_cfg(monkeypatch):
+    cfg = {
+        "backend": "native",
+        "active_profile": "azure",
+        "profiles": {
+            "azure": {
+                "provider": "azure",
+                "model": "gpt-5.4-nano",
+                "azure_endpoint": "https://my-resource.openai.azure.com/",
+                "api_version": "2025-04-01-preview",
+            },
+        },
+        "default": {"temperature": 0.0, "max_tokens": 4096},
+        "nodes": {},
+    }
+    monkeypatch.setattr(llm_client, "_models_config", lambda: cfg)
+    monkeypatch.setattr(
+        llm_client, "_runtime_config", lambda: {"budgets": {"max_llm_calls_per_run": 100}}
+    )
+    return cfg
+
+
+def test_generate_native_backend_calls_call_azure_openai(azure_generate_cfg, monkeypatch):
+    calls = {}
+
+    def fake_call_azure_openai(system, user, model, temperature, max_tokens, json_mode, azure_endpoint, api_version):
+        calls["args"] = (model, azure_endpoint, api_version, json_mode)
+        return "azure response"
+
+    monkeypatch.setattr(llm_client, "_call_azure_openai", fake_call_azure_openai)
+    client = llm_client.LLMClient()
+    result = client.generate("run-azure-1", "chat", "system prompt", "user prompt")
+
+    assert result == "azure response"
+    assert calls["args"] == (
+        "gpt-5.4-nano", "https://my-resource.openai.azure.com/", "2025-04-01-preview", False,
+    )
+
+
+def test_generate_azure_missing_endpoint_raises_value_error(azure_generate_cfg, monkeypatch):
+    azure_generate_cfg["profiles"]["azure"].pop("azure_endpoint")
+    called = {"count": 0}
+
+    def fail_if_called(*args, **kwargs):
+        called["count"] += 1
+        raise AssertionError("_call_azure_openai should not be invoked")
+
+    monkeypatch.setattr(llm_client, "_call_azure_openai", fail_if_called)
+    client = llm_client.LLMClient()
+
+    with pytest.raises(ValueError, match="azure_endpoint"):
+        client.generate("run-azure-2", "chat", "system prompt", "user prompt")
+
+    assert called["count"] == 0
+
+
+def test_generate_azure_falls_back_to_default_api_version(azure_generate_cfg, monkeypatch):
+    azure_generate_cfg["profiles"]["azure"].pop("api_version")
+    calls = {}
+
+    def fake_call_azure_openai(system, user, model, temperature, max_tokens, json_mode, azure_endpoint, api_version):
+        calls["api_version"] = api_version
+        return "azure response"
+
+    monkeypatch.setattr(llm_client, "_call_azure_openai", fake_call_azure_openai)
+    client = llm_client.LLMClient()
+    client.generate("run-azure-3", "chat", "system prompt", "user prompt")
+
+    assert calls["api_version"] == llm_client._DEFAULT_AZURE_API_VERSION
+
+
 def test_generate_litellm_backend_calls_call_litellm(generate_cfg, monkeypatch):
     generate_cfg["backend"] = "litellm"
     calls = {}

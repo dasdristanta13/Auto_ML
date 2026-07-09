@@ -449,6 +449,9 @@ class LLMClient:
         temperature = cfg.get("temperature", 0.0)
         max_tokens = cfg.get("max_tokens", 2048)
 
+        if provider == "azure" and not cfg.get("azure_endpoint"):
+            raise ValueError(f"provider 'azure' requires azure_endpoint in the profile for node '{node}'")
+
         effective_system = system_prompt
         if json_schema is not None:
             effective_system = (
@@ -483,6 +486,13 @@ class LLMClient:
                     raw = _call_gemini(
                         effective_system, attempt_user_prompt, model, temperature, max_tokens,
                         json_mode=json_schema is not None,
+                    )
+                elif provider == "azure":
+                    raw = _call_azure_openai(
+                        effective_system, attempt_user_prompt, model, temperature, max_tokens,
+                        json_mode=json_schema is not None,
+                        azure_endpoint=cfg["azure_endpoint"],
+                        api_version=cfg.get("api_version", _DEFAULT_AZURE_API_VERSION),
                     )
                 else:
                     raise ValueError(f"Unknown provider '{provider}' for node '{node}'")
