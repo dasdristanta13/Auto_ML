@@ -450,3 +450,13 @@ def test_shipped_models_yaml_defaults_to_native_backend(monkeypatch):
     cfg = llm_client.node_model_config("chat")
     assert cfg["backend"] == "native"
     assert cfg["fallback_models"] == []
+
+
+def test_shipped_models_yaml_has_azure_profile(monkeypatch):
+    llm_client._models_config.cache_clear()
+    monkeypatch.setenv("AUTOML_LLM_PROFILE", "azure")
+    cfg = llm_client.node_model_config("chat")
+    assert cfg["provider"] == "azure"
+    assert cfg["model"] == "gpt-5.4-nano"
+    assert cfg["azure_endpoint"]
+    assert cfg["api_version"] == "2025-04-01-preview"
