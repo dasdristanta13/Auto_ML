@@ -2700,6 +2700,86 @@ function renderExplainability(run, data) {
   plotsEl.innerHTML = html;
 }
 
+const EXPL_SUBTABS = ["global", "local"];
+
+function switchExplainabilitySubTab(name) {
+  for (const tab of EXPL_SUBTABS) {
+    const isActive = tab === name;
+    $(`expl-subtab-${tab}-btn`).classList.toggle("active", isActive);
+    $(`expl-subtab-${tab}-btn`).setAttribute("aria-selected", String(isActive));
+    $(`expl-subtab-${tab}-panel`).classList.toggle("hidden", !isActive);
+  }
+  if (name === "local" && lastRun) loadLocalExplanation(lastRun);
+}
+for (const tab of EXPL_SUBTABS) {
+  $(`expl-subtab-${tab}-btn`).addEventListener("click", () => switchExplainabilitySubTab(tab));
+}
+
+let localExplanationLoadedFor = null;
+
+async function loadLocalExplanation(run, { force = false } = {}) {
+  if (!(run.best_model || {}).model_path) {
+    $("local-example-empty").textContent = "No trained model is available for this run yet.";
+    $("local-example-empty").classList.remove("hidden");
+    return;
+  }
+  if (localExplanationLoadedFor === run.run_id && !force) return;
+  localExplanationLoadedFor = run.run_id;
+
+  $("local-example-waterfall").innerHTML = "";
+  $("local-example-method-card").classList.add("hidden");
+  $("local-example-empty").textContent = "Loading an example…";
+  $("local-example-empty").classList.remove("hidden");
+
+  try {
+    const data = await (await authFetch(`/api/runs/${run.run_id}/explainability/local-example`)).json();
+    renderLocalExplanation(run, data);
+  } catch {
+    $("local-example-empty").textContent = "Could not load a local example for this run.";
+    $("local-example-empty").classList.remove("hidden");
+    localExplanationLoadedFor = null;
+  }
+}
+
+function renderLocalExplanation(run, data) {
+  const empty = $("local-example-empty");
+  const waterfall = $("local-example-waterfall");
+  const methodCard = $("local-example-method-card");
+
+  if (!data.available) {
+    waterfall.innerHTML = "";
+    methodCard.classList.add("hidden");
+    empty.textContent = data.note || "Local explanation isn't available for this run.";
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+
+  $("local-example-headline").textContent = `Prediction: ${data.prediction}`;
+  waterfall.innerHTML = data.waterfall_plot_base64
+    ? `<div class="shap-plot"><img src="data:image/png;base64,${data.waterfall_plot_base64}" alt="Waterfall plot of this example's SHAP contributions" /><p class="shap-plot-caption">${escapeHtml(WATERFALL_CAPTION)}</p></div>`
+    : `<p class="muted small">A waterfall plot could not be generated for this example.</p>`;
+
+  const explainerLabel = { tree: "Tree", linear: "Linear", kernel: "Kernel" }[(lastExplainabilityData || {}).method] || "—";
+  const spec = run.task_spec || {};
+  const methodRows = [
+    ["Explainer", explainerLabel],
+    ["Model", (run.best_model || {}).candidate_name || "—"],
+    ["Test set size", data.test_set_size ?? "—"],
+    ["Sampled for SHAP", (lastExplainabilityData || {}).background_sample_size ?? "—"],
+    ["Baseline (average)", data.base_value != null ? data.base_value.toFixed(3) : "—"],
+    ["Target", spec.target_column || "—"],
+  ];
+  $("local-example-method-list").innerHTML = methodRows
+    .map(([label, value]) => `<div class="method-row"><span class="label">${escapeHtml(label)}</span><span class="mono">${escapeHtml(String(value))}</span></div>`)
+    .join("");
+  methodCard.classList.remove("hidden");
+}
+
+$("local-example-next-btn").addEventListener("click", () => {
+  if (lastRun) loadLocalExplanation(lastRun, { force: true });
+});
+
 /* ================= activity feed ================= */
 
 function renderActivity(run) {
@@ -2778,7 +2858,10 @@ function switchRunTab(name) {
   }
   $("run-rail").classList.toggle("hidden", name !== "overview");
   $("run-layout").classList.toggle("no-rail", name !== "overview");
-  if (name === "explainability" && lastRun) loadExplainabilityTab(lastRun);
+  if (name === "explainability" && lastRun) {
+    switchExplainabilitySubTab("global");
+    loadExplainabilityTab(lastRun);
+  }
 }
 for (const tab of RUN_TABS) {
   $(`tab-${tab}-btn`).addEventListener("click", () => switchRunTab(tab));
